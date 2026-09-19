@@ -20,13 +20,10 @@ jobs:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADE_HMAC_SECRET: ${{ secrets.TRADE_HMAC_SECRET }}
           TRADING_ENABLED: ${{ vars.TRADING_ENABLED || 'false' }}
           COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          COMMAND_ALLOWED_FROM: ${{ secrets.COMMAND_ALLOWED_FROM }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/process_commands.py
