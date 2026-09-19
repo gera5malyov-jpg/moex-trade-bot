@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from .config import Config
@@ -35,6 +36,61 @@ PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = True
 # automatic execution is restricted to ordinary cash-market shares and ETFs.
 EXECUTION_SUPPORTED_TYPES = {"share", "etf"}
 
+
+
+def _position_quantity(position: dict) -> Decimal:
+    value = position.get("quantity")
+    if not isinstance(value, dict):
+        return Decimal("0")
+    return (
+        Decimal(str(value.get("units", "0")))
+        + Decimal(str(value.get("nano", 0))) / Decimal("1000000000")
+    )
+
+
+def _validate_sector_concentration(
+    *,
+    client: TInvestSandboxClient,
+    new_instrument: dict,
+    portfolio: dict,
+    instrument_uid: str,
+) -> None:
+    new_sector = str(new_instrument.get("sector") or "").strip().lower()
+
+    for position in portfolio.get("positions") or []:
+        if _position_quantity(position) <= 0:
+            continue
+        existing_uid = str(
+            position.get("instrumentUid")
+            or position.get("instrument_uid")
+            or ""
+        )
+        ticker = str(position.get("ticker") or "").upper()
+        class_code = str(
+            position.get("classCode") or position.get("class_code") or ""
+        ).upper()
+        if (
+            ticker == "RUB000UTSTOM"
+            or (ticker.startswith("RUB") and class_code == "CETS")
+        ):
+            continue
+        if not existing_uid:
+            raise RuntimeError(
+                "Hard risk: existing position UID is unavailable"
+            )
+        if existing_uid == instrument_uid:
+            raise RuntimeError(
+                "Hard risk: duplicate exposure to the same instrument"
+            )
+
+        existing = client.find_instrument(existing_uid)
+        existing_sector = str(
+            existing.get("sector") or ""
+        ).strip().lower()
+        if new_sector and existing_sector and new_sector == existing_sector:
+            raise RuntimeError(
+                "Hard risk: sector concentration blocked (" + new_sector + ")"
+            )
 
 def validate_command(command: TradeCommand, config: Config) -> None:
     if command.protocol_version != PROTOCOL_VERSION:
@@ -134,6 +190,12 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
     hard_risk = None
     if command.action == "BUY":
         lot = int(prepared["instrument"].get("lot") or 0)
+        _validate_sector_concentration(
+            client=client,
+            new_instrument=prepared["instrument"],
+            portfolio=prepared["portfolio"],
+            instrument_uid=command.instrument_uid,
+        )
 
         now = utc_now()
         trading_date = now.astimezone(
