@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from .protocol import TradeCommand
@@ -15,13 +15,15 @@ MAX_OPEN_POSITIONS = 2
 
 def _decimal_parts(value: Any) -> Decimal:
     if not isinstance(value, dict):
-        return Decimal("0")
+        raise RuntimeError("Required money/quotation value is unavailable")
     units = Decimal(str(value.get("units", "0")))
     nano = Decimal(str(value.get("nano", 0))) / Decimal("1000000000")
     return units + nano
 
 
-def _quotation(value: Any) -> Decimal:
+def _quotation_or_zero(value: Any) -> Decimal:
+    if not isinstance(value, dict):
+        return Decimal("0")
     return _decimal_parts(value)
 
 
@@ -32,10 +34,33 @@ def _pick(data: dict, *names: str) -> Any:
     return None
 
 
+def _require_money(data: dict, names: tuple[str, ...], field: str) -> Decimal:
+    value = _pick(data, *names)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Hard risk: {field} is unavailable")
+    return _decimal_parts(value)
+
+
+def _is_base_rub_cash(position: dict[str, Any]) -> bool:
+    instrument_type = str(
+        _pick(position, "instrumentType", "instrument_type") or ""
+    ).lower()
+    ticker = str(position.get("ticker") or "").upper()
+    class_code = str(
+        _pick(position, "classCode", "class_code") or ""
+    ).upper()
+    return (
+        instrument_type == "currency"
+        and (ticker == "RUB000UTSTOM" or (ticker.startswith("RUB") and class_code == "CETS"))
+    )
+
+
 def _positive_position_count(portfolio: dict) -> int:
     count = 0
     for position in portfolio.get("positions") or []:
-        quantity = _quotation(
+        if _is_base_rub_cash(position):
+            continue
+        quantity = _quotation_or_zero(
             _pick(position, "quantity", "quantity_lots", "quantityLots")
         )
         if quantity > 0:
@@ -68,18 +93,20 @@ def validate_buy_hard_risk(
     if instrument_lot <= 0:
         raise ValueError("Instrument lot must be positive")
 
-    capital = _decimal_parts(
-        _pick(
-            portfolio,
-            "totalAmountPortfolio",
-            "total_amount_portfolio",
-        )
+    capital = _require_money(
+        portfolio,
+        ("totalAmountPortfolio", "total_amount_portfolio"),
+        "portfolio capital",
     )
     if capital <= 0:
-        raise RuntimeError("Hard risk: portfolio capital is unavailable")
+        raise RuntimeError("Hard risk: portfolio capital must be positive")
 
-    daily_yield = _decimal_parts(
-        _pick(portfolio, "dailyYield", "daily_yield")
+    # Fail closed. T-Invest Sandbox may omit dailyYield, so BUY must stay
+    # blocked until we have a durable independently computed daily P&L.
+    daily_yield = _require_money(
+        portfolio,
+        ("dailyYield", "daily_yield"),
+        "daily P&L",
     )
     if daily_yield <= -(capital * DAILY_STOP):
         raise RuntimeError("Hard risk: daily loss limit reached")
@@ -88,56 +115,45 @@ def validate_buy_hard_risk(
     if open_positions >= MAX_OPEN_POSITIONS:
         raise RuntimeError("Hard risk: maximum open positions reached")
 
-    initial_amount = _decimal_parts(
-        _pick(
-            preflight_order_price,
-            "initialOrderAmount",
-            "initial_order_amount",
-        )
+    initial_amount = _require_money(
+        preflight_order_price,
+        ("initialOrderAmount", "initial_order_amount"),
+        "initial order amount",
     )
-    total_amount = _decimal_parts(
-        _pick(
-            preflight_order_price,
-            "totalOrderAmount",
-            "total_order_amount",
-        )
+    total_amount = _require_money(
+        preflight_order_price,
+        ("totalOrderAmount", "total_order_amount"),
+        "total order amount",
     )
     position_value = max(abs(initial_amount), abs(total_amount))
     if position_value <= 0:
-        raise RuntimeError("Hard risk: order value is unavailable")
+        raise RuntimeError("Hard risk: order value must be positive")
 
     position_cap = capital * MAX_POSITION_SHARE
     if position_value > position_cap:
-        raise RuntimeError(
-            "Hard risk: position exceeds 10% of capital"
-        )
+        raise RuntimeError("Hard risk: position exceeds 10% of capital")
 
-    commission_buy = _decimal_parts(
-        _pick(
-            preflight_order_price,
+    commission_buy = _require_money(
+        preflight_order_price,
+        (
             "executedCommissionRub",
             "executed_commission_rub",
             "executedCommission",
             "executed_commission",
-        )
+        ),
+        "broker commission estimate",
     )
-    # Sandbox commission is symmetric enough for a conservative round-trip
-    # guard. The strategy separately evaluates realistic Trader-tariff costs.
     estimated_round_trip_commission = abs(commission_buy) * Decimal("2")
 
     units = Decimal(command.quantity_lots * instrument_lot)
-    price_risk = (
-        command.limit_price - command.stop_loss
-    ) * units
+    price_risk = (command.limit_price - command.stop_loss) * units
     if price_risk <= 0:
         raise RuntimeError("Hard risk: invalid stop distance")
 
     max_loss = price_risk + estimated_round_trip_commission
     risk_budget = capital * RISK_PER_TRADE
     if max_loss > risk_budget:
-        raise RuntimeError(
-            "Hard risk: max loss exceeds 0.25% of capital"
-        )
+        raise RuntimeError("Hard risk: max loss exceeds 0.25% of capital")
 
     return RiskCheck(
         capital_rub=capital,
