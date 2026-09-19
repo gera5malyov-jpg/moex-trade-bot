@@ -17,7 +17,11 @@ from .protocol import (
     verify_auth_token,
 )
 from .lifecycle import open_protected_long
-from .risk import compute_daily_pnl_rub, validate_buy_hard_risk
+from .risk import (
+    compute_consecutive_losses,
+    compute_daily_pnl_rub,
+    validate_buy_hard_risk,
+)
 from .tinvest import TInvestSandboxClient
 
 
@@ -153,6 +157,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             baseline_payload=baseline,
             operations_since_baseline=operations,
         )
+        consecutive_losses = compute_consecutive_losses(operations)
 
         hard_risk = validate_buy_hard_risk(
             command=command,
@@ -160,6 +165,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             preflight_order_price=prepared["preflight_order_price"],
             instrument_lot=lot,
             daily_pnl_rub=daily_pnl,
+            consecutive_losses=consecutive_losses,
         )
 
     if command.action == "BUY":
