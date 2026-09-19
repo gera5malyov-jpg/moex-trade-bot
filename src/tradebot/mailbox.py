@@ -158,6 +158,25 @@ def send_execution_receipt(
     )
 
 
+def send_risk_baseline_email(
+    *,
+    smtp_host: str,
+    user: str,
+    app_password: str,
+    recipient: str,
+    trading_date: str,
+    payload: dict,
+) -> None:
+    _send_text_email(
+        smtp_host=smtp_host,
+        user=user,
+        app_password=app_password,
+        recipient=recipient,
+        subject=f"[TRADE-RISK-BASELINE] {trading_date}",
+        body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+    )
+
+
 def send_daily_data_email(
     *,
     smtp_host: str,
@@ -293,6 +312,47 @@ def _imap_has_exact_subject_from(
             ):
                 return True
         return False
+    finally:
+        client.logout()
+
+
+def load_risk_baseline(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+    trading_date: str,
+) -> dict:
+    subject = f"[TRADE-RISK-BASELINE] {trading_date}"
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    client.select("INBOX", readonly=True)
+    try:
+        status, data = client.search(None, "SUBJECT", f'"{subject}"')
+        if status != "OK":
+            raise RuntimeError("IMAP risk baseline search failed")
+
+        matches: list[bytes] = []
+        for msg_id in data[0].split():
+            status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not fetched:
+                continue
+            raw = fetched[0][1]
+            msg = email.message_from_bytes(raw)
+            sender = parseaddr(msg.get("From", ""))[1].lower()
+            actual_subject = _decode_header(msg.get("Subject")).strip()
+            if sender == user.lower() and actual_subject == subject:
+                matches.append(raw)
+
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Expected exactly one risk baseline for {trading_date}, "
+                f"found {len(matches)}"
+            )
+        payload = json.loads(extract_json_object(_extract_text(email.message_from_bytes(matches[0]))))
+        if not isinstance(payload, dict):
+            raise RuntimeError("Risk baseline payload must be an object")
+        return payload
     finally:
         client.logout()
 
