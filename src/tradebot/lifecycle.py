@@ -209,6 +209,7 @@ def open_protected_long(
     state: dict[str, Any] = {
         "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
         "environment": "TINVEST_SANDBOX",
+        "sandbox_account_id": client.account_id,
         "signal_id": command.signal_id,
         "ticker": command.ticker,
         "class_code": command.class_code,
