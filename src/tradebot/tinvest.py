@@ -309,7 +309,7 @@ class TInvestSandboxClient:
                 )
         return limits
 
-    def post_limit_order(
+    def prepare_limit_order(
         self,
         *,
         ticker: str,
@@ -318,7 +318,6 @@ class TInvestSandboxClient:
         side: str,
         quantity_lots: int,
         limit_price: Decimal,
-        idempotency_seed: str,
     ) -> dict[str, Any]:
         side = side.upper()
         if side not in {"BUY", "SELL"}:
@@ -333,20 +332,51 @@ class TInvestSandboxClient:
             class_code=class_code,
             instrument_uid=instrument_uid,
         )
-
         limits = self._assert_own_funds_or_position(
             instrument_uid=instrument_uid,
             side=side,
             quantity_lots=quantity_lots,
             limit_price=limit_price,
         )
-
         preflight = self.get_order_price(
             instrument_uid=instrument_uid,
             side=side,
             quantity_lots=quantity_lots,
             limit_price=limit_price,
         )
+        return {
+            "instrument": instrument,
+            "limits": limits,
+            "preflight_order_price": preflight,
+            "portfolio": self.get_portfolio(),
+        }
+
+    def post_limit_order(
+        self,
+        *,
+        ticker: str,
+        class_code: str,
+        instrument_uid: str,
+        side: str,
+        quantity_lots: int,
+        limit_price: Decimal,
+        idempotency_seed: str,
+        prepared: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        side = side.upper()
+        if prepared is None:
+            prepared = self.prepare_limit_order(
+                ticker=ticker,
+                class_code=class_code,
+                instrument_uid=instrument_uid,
+                side=side,
+                quantity_lots=quantity_lots,
+                limit_price=limit_price,
+            )
+
+        instrument = prepared["instrument"]
+        limits = prepared["limits"]
+        preflight = prepared["preflight_order_price"]
 
         order_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_seed))
         payload = {
