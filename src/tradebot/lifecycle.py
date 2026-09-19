@@ -457,16 +457,16 @@ def monitor_lifecycle_state(
     )
 
     if position_lots <= 0:
-        _cancel_all_known_protection(client, state)
-        out = dict(state)
-        out.update(
-            {
-                "status": "CLOSED_POSITION_GONE",
-                "remaining_lots": 0,
-                "updated_at": now.isoformat(),
-            }
+        return _cancel_verified_or_wait(
+            client=client,
+            state=state,
+            reason=str(state.get("close_reason") or "POSITION_GONE"),
+            closed_status=str(
+                state.get("pending_closed_status")
+                or state.get("triggered_closed_status")
+                or "CLOSED_POSITION_GONE"
+            ),
         )
-        return out
 
     if current_status in {
         "FORCE_EXIT_PENDING",
@@ -584,31 +584,28 @@ def monitor_lifecycle_state(
     if current_status == "PROTECTION_TRIGGERED":
         child_id = str(state.get("triggered_exchange_order_id") or "")
         if not child_id:
-            _cancel_all_known_protection(client, state)
-            return _force_exit_remaining(
+            return _cancel_verified_or_wait(
                 client=client,
                 state=state,
                 reason="TRIGGERED_PROTECTION_WITHOUT_CHILD_ORDER",
-                closed_status="CLOSED_FORCE_EXIT",
+                closed_status=str(
+                    state.get("triggered_closed_status")
+                    or "CLOSED_FORCE_EXIT"
+                ),
             )
 
         child = client.get_order_state(child_id)
         child_status = _status(child)
         if child_status == "EXECUTION_REPORT_STATUS_FILL":
-            _cancel_all_known_protection(client, state)
-            out = dict(state)
-            out.update(
-                {
-                    "status": str(
-                        state.get("triggered_closed_status")
-                        or "CLOSED_FORCE_EXIT"
-                    ),
-                    "remaining_lots": 0,
-                    "updated_at": now.isoformat(),
-                    "triggered_child_status": child_status,
-                }
+            return _cancel_verified_or_wait(
+                client=client,
+                state=state,
+                reason="PROTECTIVE_CHILD_FILLED",
+                closed_status=str(
+                    state.get("triggered_closed_status")
+                    or "CLOSED_FORCE_EXIT"
+                ),
             )
-            return out
 
         if child_status in {
             "EXECUTION_REPORT_STATUS_PARTIALLYFILL",
@@ -738,18 +735,21 @@ def monitor_lifecycle_state(
     child = client.get_order_state(child_id)
     child_status = _status(child)
     if child_status == "EXECUTION_REPORT_STATUS_FILL":
-        out = dict(state)
-        out.update(
+        filled_state = dict(state)
+        filled_state.update(
             {
-                "status": closed_status,
-                "updated_at": now.isoformat(),
-                "remaining_lots": 0,
                 "triggered_by": trigger_name,
                 "triggered_exchange_order_id": child_id,
+                "triggered_closed_status": closed_status,
                 "triggered_child_status": child_status,
             }
         )
-        return out
+        return _cancel_verified_or_wait(
+            client=client,
+            state=filled_state,
+            reason=f"{trigger_name}_FILLED",
+            closed_status=closed_status,
+        )
 
     if child_status in {
         "EXECUTION_REPORT_STATUS_PARTIALLYFILL",
