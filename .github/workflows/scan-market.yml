@@ -1,7 +1,11 @@
 name: Scan market candidates
+# one-time automatic Outlook bridge scanner verification
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/scan-market.yml"
 
 permissions:
   contents: read
@@ -31,8 +35,10 @@ jobs:
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "1"
           SCANNER_MAX_SIGNALS: "2"
+          SCANNER_COOLDOWN_MINUTES: "45"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: anthony-19951936@outlook.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/scan_market.py
