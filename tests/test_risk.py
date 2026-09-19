@@ -5,6 +5,7 @@ from decimal import Decimal
 from tradebot.protocol import TradeCommand
 from tradebot.risk import (
     compute_consecutive_losses,
+    compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
     validate_buy_hard_risk,
 )
@@ -179,6 +180,55 @@ class RiskTests(unittest.TestCase):
                 operations_since_baseline={
                     "items": [{"type": "OPERATION_TYPE_INPUT"}],
                 },
+            )
+
+    def test_lifecycle_consecutive_loss_counter(self):
+        states = [
+            {
+                "lifecycle_kind": "SMOKE_TEST",
+                "status": "CLOSED_TIME_STOP",
+                "updated_at": "2026-09-19T09:00:00+00:00",
+                "realized_pnl_rub": "-100",
+            },
+            {
+                "lifecycle_kind": "STRATEGY",
+                "status": "CLOSED_TAKE_PROFIT",
+                "updated_at": "2026-09-19T10:00:00+00:00",
+                "realized_pnl_rub": "10",
+            },
+            {
+                "lifecycle_kind": "STRATEGY",
+                "status": "CLOSED_STOP_LOSS",
+                "updated_at": "2026-09-19T11:00:00+00:00",
+                "realized_pnl_rub": "-5",
+            },
+            {
+                "lifecycle_kind": "STRATEGY",
+                "status": "CLOSED_STOP_LOSS",
+                "updated_at": "2026-09-19T12:00:00+00:00",
+                "realized_pnl_rub": "-7",
+            },
+        ]
+        self.assertEqual(
+            compute_consecutive_losses_from_lifecycle(
+                states,
+                since_utc="2026-09-19T03:00:00+00:00",
+            ),
+            2,
+        )
+
+    def test_lifecycle_loss_counter_fails_closed_without_pnl(self):
+        states = [
+            {
+                "lifecycle_kind": "STRATEGY",
+                "status": "CLOSED_POSITION_GONE",
+                "updated_at": "2026-09-19T12:00:00+00:00",
+            }
+        ]
+        with self.assertRaises(RuntimeError):
+            compute_consecutive_losses_from_lifecycle(
+                states,
+                since_utc="2026-09-19T03:00:00+00:00",
             )
 
     def test_consecutive_loss_counter(self):
