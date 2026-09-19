@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tradebot.protocol import TradeCommand
-from tradebot.risk import validate_buy_hard_risk
+from tradebot.risk import compute_daily_pnl_rub, validate_buy_hard_risk
 
 
 def money(value: str):
@@ -95,6 +95,40 @@ class RiskTests(unittest.TestCase):
                     "executedCommissionRub": money("1.5"),
                 },
                 instrument_lot=10,
+            )
+
+    def test_computes_daily_pnl_from_equity_baseline(self):
+        pnl = compute_daily_pnl_rub(
+            current_portfolio={
+                "totalAmountPortfolio": money("1001200"),
+            },
+            baseline_payload={
+                "environment": "TINVEST_SANDBOX",
+                "generated_at_utc": "2026-09-19T03:00:00+00:00",
+                "portfolio": {
+                    "totalAmountPortfolio": money("1000000"),
+                },
+            },
+            operations_since_baseline={"items": []},
+        )
+        self.assertEqual(pnl, Decimal("1200"))
+
+    def test_baseline_pnl_rejects_funding_after_baseline(self):
+        with self.assertRaises(RuntimeError):
+            compute_daily_pnl_rub(
+                current_portfolio={
+                    "totalAmountPortfolio": money("1001200"),
+                },
+                baseline_payload={
+                    "environment": "TINVEST_SANDBOX",
+                    "generated_at_utc": "2026-09-19T03:00:00+00:00",
+                    "portfolio": {
+                        "totalAmountPortfolio": money("1000000"),
+                    },
+                },
+                operations_since_baseline={
+                    "items": [{"type": "OPERATION_TYPE_INPUT"}],
+                },
             )
 
 
