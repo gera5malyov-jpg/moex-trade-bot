@@ -4,10 +4,14 @@ from decimal import Decimal
 
 from tradebot.protocol import (
     PROTOCOL_VERSION,
+    PROTECTIVE_LIFECYCLE_VERSION,
+    SANDBOX_READY_VERSION,
     TradeCommand,
     make_auth_token,
+    make_sandbox_readiness_token,
     quotation_from_decimal,
     verify_auth_token,
+    verify_sandbox_readiness_payload,
 )
 
 
@@ -42,6 +46,57 @@ class ProtocolTests(unittest.TestCase):
         tampered["execution_capability"] = True
         self.assertFalse(
             verify_auth_token(secret, token=token, **tampered)
+        )
+
+    def test_signed_sandbox_readiness_rejects_tampering(self):
+        secret = "r" * 32
+        verified_at = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "ready_version": SANDBOX_READY_VERSION,
+            "environment": "TINVEST_SANDBOX",
+            "verified_at_utc": verified_at,
+            "sandbox_account_name": "github-moex-trade-bot",
+            "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
+            "instrument": "SBER_TQBR",
+            "entry_protected": True,
+            "stop_loss_active_verified": True,
+            "take_profit_active_verified": True,
+            "time_stop_force_exit_verified": True,
+            "position_after_cleanup_lots": 0,
+        }
+        payload["readiness_token"] = make_sandbox_readiness_token(
+            secret,
+            verified_at_utc=verified_at,
+            sandbox_account_name="github-moex-trade-bot",
+            lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
+            instrument="SBER_TQBR",
+        )
+        self.assertTrue(
+            verify_sandbox_readiness_payload(
+                secret,
+                payload,
+                expected_account_name="github-moex-trade-bot",
+            )
+        )
+
+        tampered = dict(payload)
+        tampered["position_after_cleanup_lots"] = 1
+        self.assertFalse(
+            verify_sandbox_readiness_payload(
+                secret,
+                tampered,
+                expected_account_name="github-moex-trade-bot",
+            )
+        )
+
+        tampered = dict(payload)
+        tampered["stop_loss_active_verified"] = False
+        self.assertFalse(
+            verify_sandbox_readiness_payload(
+                secret,
+                tampered,
+                expected_account_name="github-moex-trade-bot",
+            )
         )
 
     def test_quotation(self):
