@@ -17,6 +17,7 @@ class FakeClient:
         self.cancelled = []
         self.stop_calls = []
         self.stop_orders = []
+        self.hold_cancellation_active = False
         self.child_state = {
             "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
         }
@@ -52,6 +53,12 @@ class FakeClient:
             if kind == "STOP_ORDER_TYPE_STOP_LOSS"
             else "take-profit-id"
         )
+        self.stop_orders.append(
+            {
+                "stopOrderId": stop_id,
+                "status": "STOP_ORDER_STATUS_ACTIVE",
+            }
+        )
         return {
             "request_order_id": stop_id + "-request",
             "stop_order": {"stopOrderId": stop_id},
@@ -59,6 +66,10 @@ class FakeClient:
 
     def cancel_stop_order(self, stop_order_id):
         self.cancelled.append(stop_order_id)
+        if not self.hold_cancellation_active:
+            for item in self.stop_orders:
+                if item.get("stopOrderId") == stop_order_id:
+                    item["status"] = "STOP_ORDER_STATUS_CANCELED"
         return {"time": datetime.now(timezone.utc).isoformat()}
 
     def get_position_lots(self, **kwargs):
@@ -71,7 +82,14 @@ class FakeClient:
         }
 
     def get_stop_orders(self, **kwargs):
-        return list(self.stop_orders)
+        status = kwargs.get("status", "STOP_ORDER_STATUS_ALL")
+        if status == "STOP_ORDER_STATUS_ALL":
+            return list(self.stop_orders)
+        return [
+            item
+            for item in self.stop_orders
+            if item.get("status") == status
+        ]
 
     def get_order_state(self, order_id):
         return dict(self.child_state)
@@ -164,6 +182,24 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(updated["status"], "CLOSED_STOP_LOSS")
         self.assertIn("take-profit-id", client.cancelled)
+
+    def test_time_stop_waits_for_verified_cancellation(self):
+        past = datetime.now(timezone.utc) - timedelta(minutes=1)
+        client = FakeClient()
+        state = open_protected_long(
+            client=client,
+            command=self.command(time_stop=past),
+            prepared=self.prepared(),
+        )
+        client.hold_cancellation_active = True
+
+        updated = monitor_lifecycle_state(
+            client=client,
+            state=state,
+            now=datetime.now(timezone.utc),
+        )
+        self.assertEqual(updated["status"], "PROTECTION_CANCEL_PENDING")
+        self.assertEqual(client.position_lots, 1)
 
     def test_time_stop_forces_exit(self):
         past = datetime.now(timezone.utc) - timedelta(minutes=1)
