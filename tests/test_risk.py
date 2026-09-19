@@ -63,6 +63,7 @@ class RiskTests(unittest.TestCase):
             },
             instrument_lot=10,
             min_price_increment=Decimal("0.01"),
+            market_spread_per_unit=Decimal("0.10"),
             consecutive_losses=0,
         )
         self.assertLessEqual(
@@ -109,6 +110,7 @@ class RiskTests(unittest.TestCase):
                 },
                 instrument_lot=10,
                 min_price_increment=Decimal("0.01"),
+            market_spread_per_unit=Decimal("0.10"),
                 consecutive_losses=0,
             )
 
@@ -128,6 +130,7 @@ class RiskTests(unittest.TestCase):
                 },
                 instrument_lot=10,
             min_price_increment=Decimal("0.01"),
+            market_spread_per_unit=Decimal("0.10"),
             )
 
     def test_rejects_daily_stop(self):
@@ -146,6 +149,7 @@ class RiskTests(unittest.TestCase):
                 },
                 instrument_lot=10,
             min_price_increment=Decimal("0.01"),
+            market_spread_per_unit=Decimal("0.10"),
             )
 
     def test_computes_daily_pnl_from_equity_baseline(self):
