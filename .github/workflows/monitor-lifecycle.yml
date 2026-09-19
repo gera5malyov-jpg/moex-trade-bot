@@ -1,0 +1,40 @@
+name: Monitor sandbox protective lifecycle
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 5 minutes, weekdays, 06:00–23:55 Moscow (UTC+3).
+    # Broker-side STOP/TAKE orders remain active between monitor runs.
+    - cron: "*/5 3-20 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor-sandbox-protective-lifecycle
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Reconcile protective orders
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/monitor_lifecycle.py
