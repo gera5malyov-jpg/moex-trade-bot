@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -9,6 +10,14 @@ def _required(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _derive_hmac_secret(tinvest_token: str) -> str:
+    # Domain-separated key derivation. The T-Invest token itself is never
+    # written to signals, logs, or the repository.
+    return hashlib.sha256(
+        ("moex-trade-bot:command-auth:v1:" + tinvest_token).encode("utf-8")
+    ).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -28,23 +37,24 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        secret = _required("TRADE_HMAC_SECRET")
-        if len(secret) < 32:
-            raise RuntimeError("TRADE_HMAC_SECRET must be at least 32 characters")
+        tinvest_token = _required("TINVEST_TOKEN")
+        mail_user = _required("MAIL_USER")
 
         return cls(
-            tinvest_token=_required("TINVEST_TOKEN"),
+            tinvest_token=tinvest_token,
             sandbox_account_name=os.getenv(
                 "TINVEST_SANDBOX_ACCOUNT_NAME",
                 "github-moex-trade-bot",
             ).strip(),
             trading_enabled=os.getenv("TRADING_ENABLED", "false").lower() == "true",
-            hmac_secret=secret,
+            hmac_secret=_derive_hmac_secret(tinvest_token),
             command_max_age_minutes=int(os.getenv("COMMAND_MAX_AGE_MINUTES", "15")),
-            mail_user=_required("MAIL_USER"),
+            mail_user=mail_user,
             mail_app_password=_required("MAIL_APP_PASSWORD"),
-            mail_to=_required("MAIL_TO"),
-            command_allowed_from=_required("COMMAND_ALLOWED_FROM"),
+            mail_to=os.getenv("MAIL_TO", "").strip() or mail_user,
+            command_allowed_from=(
+                os.getenv("COMMAND_ALLOWED_FROM", "").strip() or mail_user
+            ),
             imap_host=os.getenv("MAIL_IMAP_HOST", "imap.gmail.com").strip(),
             smtp_host=os.getenv("MAIL_SMTP_HOST", "smtp.gmail.com").strip(),
         )
