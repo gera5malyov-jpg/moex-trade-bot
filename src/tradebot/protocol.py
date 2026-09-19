@@ -217,6 +217,58 @@ def verify_sandbox_readiness_payload(
         return False
 
 
+def _internal_journal_payload(
+    *,
+    purpose: str,
+    payload: dict[str, Any],
+) -> bytes:
+    clean = {
+        key: value
+        for key, value in payload.items()
+        if key != "journal_token"
+    }
+    envelope = {
+        "purpose": str(purpose),
+        "payload": clean,
+    }
+    return json.dumps(
+        envelope,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def make_internal_journal_token(
+    secret: str,
+    *,
+    purpose: str,
+    payload: dict[str, Any],
+) -> str:
+    return hmac.new(
+        secret.encode("utf-8"),
+        _internal_journal_payload(purpose=purpose, payload=payload),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_internal_journal_token(
+    secret: str,
+    *,
+    purpose: str,
+    payload: dict[str, Any],
+) -> bool:
+    token = str(payload.get("journal_token") or "")
+    if not token:
+        return False
+    expected = make_internal_journal_token(
+        secret,
+        purpose=purpose,
+        payload=payload,
+    )
+    return hmac.compare_digest(expected, token)
+
+
 def quotation_from_decimal(value: Decimal) -> dict[str, Any]:
     if not value.is_finite() or value <= 0:
         raise ValueError("Price must be finite and positive")
