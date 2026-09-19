@@ -69,6 +69,36 @@ def _positive_position_count(portfolio: dict) -> int:
 
 
 
+
+def compute_consecutive_losses(
+    operations_since_baseline: dict,
+) -> int:
+    items = (
+        operations_since_baseline.get("items")
+        or operations_since_baseline.get("operations")
+        or []
+    )
+    sells = [
+        item
+        for item in items
+        if str(item.get("type") or "").upper() == "OPERATION_TYPE_SELL"
+    ]
+    sells.sort(key=lambda item: str(item.get("date") or ""))
+
+    count = 0
+    for operation in reversed(sells):
+        value = operation.get("yield")
+        if not isinstance(value, dict):
+            raise RuntimeError(
+                "Hard risk: realized SELL yield unavailable for loss streak"
+            )
+        result = _decimal_parts(value)
+        if result < 0:
+            count += 1
+            continue
+        break
+    return count
+
 def compute_daily_pnl_rub(
     *,
     current_portfolio: dict,
@@ -130,6 +160,7 @@ def validate_buy_hard_risk(
     preflight_order_price: dict,
     instrument_lot: int,
     daily_pnl_rub: Decimal | None = None,
+    consecutive_losses: int | None = None,
 ) -> RiskCheck:
     if command.action != "BUY":
         raise ValueError("Hard-risk BUY validator requires BUY command")
@@ -158,6 +189,11 @@ def validate_buy_hard_risk(
         daily_yield = Decimal(daily_pnl_rub)
     if daily_yield <= -(capital * DAILY_STOP):
         raise RuntimeError("Hard risk: daily loss limit reached")
+
+    if consecutive_losses is None:
+        raise RuntimeError("Hard risk: consecutive loss count is unavailable")
+    if consecutive_losses >= 3:
+        raise RuntimeError("Hard risk: 3 consecutive losses reached")
 
     open_positions = _positive_position_count(portfolio)
     if open_positions >= MAX_OPEN_POSITIONS:
