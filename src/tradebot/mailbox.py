@@ -439,20 +439,12 @@ def load_latest_lifecycle_states(
             signal_id = str(payload.get("signal_id") or "").strip()
             if not signal_id:
                 continue
-            revision = int(payload.get("state_revision") or 0)
-            if revision <= 0:
-                continue
             numeric_id = int(msg_id)
             previous = latest.get(signal_id)
-            if previous is None:
-                latest[signal_id] = (revision, numeric_id, payload)
-                continue
-            if revision > previous[0]:
-                latest[signal_id] = (revision, numeric_id, payload)
-            elif revision == previous[0] and numeric_id > previous[1]:
-                latest[signal_id] = (revision, numeric_id, payload)
+            if previous is None or numeric_id > previous[0]:
+                latest[signal_id] = (numeric_id, payload)
 
-        return [item[2] for item in latest.values()]
+        return [item[1] for item in latest.values()]
     finally:
         client.logout()
 
