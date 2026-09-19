@@ -1,11 +1,7 @@
 name: Daily sandbox risk baseline
-# one-time live baseline verification
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/risk-baseline.yml"
   schedule:
     # 06:00 Moscow = 03:00 UTC. The baseline is taken before the intraday
     # scanner becomes active.
