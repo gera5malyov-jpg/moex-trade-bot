@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "src/**"
+      - "scripts/**"
       - "tests/**"
       - "requirements.txt"
       - ".github/workflows/tests.yml"
