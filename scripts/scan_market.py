@@ -40,6 +40,17 @@ def execution_snapshot_ready(
         return False
     if instrument.get("buyAvailableFlag") is not True:
         return False
+    if instrument.get("liquidityFlag") is not True:
+        return False
+    if instrument.get("blockedTcaFlag") is True:
+        return False
+    required_tests = (
+        instrument.get("requiredTests")
+        or instrument.get("required_tests")
+        or []
+    )
+    if required_tests:
+        return False
 
     trading = context.get("trading_status") or {}
     status = str(
