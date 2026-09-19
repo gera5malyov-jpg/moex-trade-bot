@@ -221,6 +221,7 @@ def validate_buy_hard_risk(
     preflight_order_price: dict,
     instrument_lot: int,
     min_price_increment: Decimal,
+    market_spread_per_unit: Decimal,
     daily_pnl_rub: Decimal | None = None,
     consecutive_losses: int | None = None,
 ) -> RiskCheck:
@@ -232,6 +233,11 @@ def validate_buy_hard_risk(
         raise ValueError("Instrument lot must be positive")
     if not min_price_increment.is_finite() or min_price_increment <= 0:
         raise ValueError("min_price_increment must be finite and positive")
+    if (
+        not market_spread_per_unit.is_finite()
+        or market_spread_per_unit < 0
+    ):
+        raise ValueError("market_spread_per_unit must be finite and non-negative")
     if command.take_profit is None:
         raise ValueError("BUY requires take_profit")
 
@@ -300,12 +306,14 @@ def validate_buy_hard_risk(
     if price_risk <= 0:
         raise RuntimeError("Hard risk: invalid stop distance")
 
-    # Code-level minimum slippage reserve: one tick on entry and one
-    # tick on exit. The reviewer may use a larger estimate; this is only the
-    # hard floor that prevents an optimistic zero-slippage BUY.
-    min_round_trip_slippage = (
-        min_price_increment * units * Decimal("2")
+    # Code-level execution-cost floor: at least one tick on entry and
+    # one tick on exit, but never less than the currently observed full
+    # bid/ask spread. Work may use a larger slippage estimate.
+    execution_friction_per_unit = max(
+        min_price_increment * Decimal("2"),
+        market_spread_per_unit,
     )
+    min_round_trip_slippage = execution_friction_per_unit * units
     net_risk = (
         price_risk
         + estimated_round_trip_commission
