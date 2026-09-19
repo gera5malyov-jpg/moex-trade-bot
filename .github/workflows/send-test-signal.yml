@@ -1,4 +1,5 @@
 name: Send test signal
+# one-time Work trigger verification
 
 on:
   workflow_dispatch:
