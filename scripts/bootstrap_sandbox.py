@@ -1,11 +1,13 @@
 import os
 from decimal import Decimal
+from pathlib import Path
 
 import requests
 
 
 ACCOUNT_NAME = os.getenv("TINVEST_SANDBOX_ACCOUNT_NAME", "github-moex-trade-bot")
 INITIAL_BALANCE_RUB = Decimal("1000000")
+CA_BUNDLE = Path(__file__).resolve().parents[1] / "certs" / "RussianTrustedRootCA.pem"
 
 BASE = (
     "https://sandbox-invest-public-api.tbank.ru/rest/"
@@ -14,11 +16,15 @@ BASE = (
 
 
 def post(headers, method, payload):
+    if not CA_BUNDLE.is_file():
+        raise RuntimeError(f"T-Bank CA certificate not found: {CA_BUNDLE}")
+
     response = requests.post(
         BASE + "/" + method,
         headers=headers,
         json=payload,
         timeout=10,
+        verify=str(CA_BUNDLE),
     )
     if not response.ok:
         raise RuntimeError(
