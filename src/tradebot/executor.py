@@ -49,15 +49,19 @@ def validate_command(command: TradeCommand, config: Config) -> None:
     if signal_time < now - timedelta(minutes=config.signal_max_age_minutes):
         raise ValueError("Signal is stale")
 
-    if command.expires_at <= now:
-        raise ValueError("Command expired")
+    # Expiry is an execution-safety boundary for broker actions.
+    # A signed SKIP cannot place an order, so it may still be journaled after
+    # expiry when GitHub Actions scheduling is delayed.
+    if command.action != "SKIP":
+        if command.expires_at <= now:
+            raise ValueError("Command expired")
 
-    max_future = now + timedelta(minutes=config.command_max_age_minutes)
-    if command.expires_at > max_future:
-        raise ValueError(
-            f"expires_at is too far in future; max "
-            f"{config.command_max_age_minutes} minutes"
-        )
+        max_future = now + timedelta(minutes=config.command_max_age_minutes)
+        if command.expires_at > max_future:
+            raise ValueError(
+                f"expires_at is too far in future; max "
+                f"{config.command_max_age_minutes} minutes"
+            )
 
     if command.action != "SKIP" and not command.execution_capability:
         raise RuntimeError(
