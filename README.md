@@ -13,9 +13,12 @@
 - production endpoint в коде отсутствует;
 - `TRADING_ENABLED=false` по умолчанию;
 - BUY дополнительно жёстко заблокирован в коде до реализации защитного lifecycle;
-- стратегия сканирования рынка пока НЕ реализована;
-- автоматический поиск кандидатов пока НЕ запускается;
-- обработчик `[TRADE-CMD]` пока запускается вручную через workflow_dispatch.
+- analysis-only multi-asset scanner реализован и проверен; автоматическое расписание scanner пока не включено;
+- scanner отправляет только `execution_capability=false`, поэтому его сигналы не могут превратиться в заявку;
+- обработчик `[TRADE-CMD]` проверен end-to-end на protocol v2 и запускается каждые 5 минут с 06:00 до 23:55 МСК;
+- после каждой успешно обработанной команды создаётся Gmail receipt `[TRADE-EXEC]` для журнала и дедупликации;
+- ежедневно в 23:52 МСК GitHub отправляет `[TRADE-DAILY-DATA]` с portfolio/positions/operations T-Invest Sandbox;
+- ежедневный ChatGPT-отчёт настроен на 23:59 МСК.
 
 Поэтому репозиторий пока является безопасным Sandbox-каркасом, а не готовым автономным торговым роботом.
 
@@ -102,13 +105,15 @@ Universe для анализа включает:
 ## Что ещё не готово
 
 Перед автоматическим Sandbox BUY необходимо:
-1. реализовать market scanner и enriched `[TRADE-SIGNAL]`;
-2. реализовать кодовые hard-risk checks 0,25% / 0,75% / 10% / max 2 positions;
-3. реализовать protective-order lifecycle;
-4. реализовать persistent journal/deduplication;
-5. настроить автоматический запуск command processor;
+1. подключить и проверить Gmail event-triggered ChatGPT Work reviewer с файлом `prompts/chatgpt_work_trade_reviewer_ru.md`;
+2. реализовать независимый дневной P&L для hard-risk engine: Sandbox не всегда возвращает dailyYield, поэтому отсутствие показателя сейчас fail-closed;
+3. реализовать protective-order lifecycle: entry fill → STOP_LOSS/TAKE_PROFIT → отмена sibling-заказа → TIME_STOP/FORCE_EXIT;
+4. расширить кодовую проверку корреляции/секторной концентрации и последовательных убытков;
+5. отдельно валидировать ценовую семантику облигаций, фьючерсов, опционов, валюты, металлов и ЦФА перед разрешением исполнения этих классов;
 6. провести end-to-end тест BUY → protective orders → EXIT только в Sandbox;
 7. только после этого обсуждать отдельный production-контур.
+
+Сейчас `PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED=False`, поэтому BUY конструктивно заблокирован.
 
 ## Secrets
 
@@ -131,3 +136,14 @@ GitHub Secrets:
 ## Важное ограничение
 
 Этот проект не гарантирует прибыль. ChatGPT reviewer — аналитический слой, а не замена кодовым лимитам риска. Любая будущая торговля реальными деньгами должна быть отдельным этапом с независимой валидацией и явным включением production-контура.
+
+
+## Проверки 2026-09-19
+
+Подтверждено фактическими тестами:
+- protocol v2 unit tests — success;
+- daily Sandbox snapshot → Gmail — success;
+- scanner → enriched `[TRADE-SIGNAL]` — success;
+- scanner после bulk-оптимизации сократился примерно с 2 мин 20 сек до ~14 сек на контрольном прогоне;
+- Gmail `[TRADE-CMD]` v2 SKIP → GitHub validation → `[TRADE-EXEC]` — success;
+- в проверочном v2 прогоне брокерская заявка не создавалась.
