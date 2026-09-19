@@ -5,12 +5,14 @@ import hmac
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any
 
 
 PROTOCOL_VERSION = "2"
+PROTECTIVE_LIFECYCLE_VERSION = "2"
+SANDBOX_READY_VERSION = "2"
 
 
 def utc_now() -> datetime:
@@ -111,6 +113,108 @@ def verify_auth_token(
         execution_capability=execution_capability,
     )
     return hmac.compare_digest(expected, str(token))
+
+
+
+def _sandbox_readiness_auth_payload(
+    *,
+    verified_at_utc: str,
+    sandbox_account_name: str,
+    lifecycle_version: str,
+    instrument: str,
+) -> bytes:
+    payload = {
+        "ready_version": SANDBOX_READY_VERSION,
+        "environment": "TINVEST_SANDBOX",
+        "verified_at_utc": str(verified_at_utc),
+        "sandbox_account_name": str(sandbox_account_name),
+        "lifecycle_version": str(lifecycle_version),
+        "instrument": str(instrument).upper().strip(),
+        "entry_protected": True,
+        "stop_loss_active_verified": True,
+        "take_profit_active_verified": True,
+        "time_stop_force_exit_verified": True,
+        "position_after_cleanup_lots": 0,
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def make_sandbox_readiness_token(
+    secret: str,
+    *,
+    verified_at_utc: str,
+    sandbox_account_name: str,
+    lifecycle_version: str,
+    instrument: str,
+) -> str:
+    return hmac.new(
+        secret.encode("utf-8"),
+        _sandbox_readiness_auth_payload(
+            verified_at_utc=verified_at_utc,
+            sandbox_account_name=sandbox_account_name,
+            lifecycle_version=lifecycle_version,
+            instrument=instrument,
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_sandbox_readiness_payload(
+    secret: str,
+    payload: dict[str, Any],
+    *,
+    expected_account_name: str,
+) -> bool:
+    try:
+        if str(payload.get("ready_version") or "") != SANDBOX_READY_VERSION:
+            return False
+        if str(payload.get("environment") or "") != "TINVEST_SANDBOX":
+            return False
+        if (
+            str(payload.get("sandbox_account_name") or "")
+            != expected_account_name
+        ):
+            return False
+        if (
+            str(payload.get("lifecycle_version") or "")
+            != PROTECTIVE_LIFECYCLE_VERSION
+        ):
+            return False
+        if not str(payload.get("instrument") or "").strip():
+            return False
+        if payload.get("entry_protected") is not True:
+            return False
+        if payload.get("stop_loss_active_verified") is not True:
+            return False
+        if payload.get("take_profit_active_verified") is not True:
+            return False
+        if payload.get("time_stop_force_exit_verified") is not True:
+            return False
+        if int(payload.get("position_after_cleanup_lots")) != 0:
+            return False
+
+        verified_at = parse_iso_utc(str(payload.get("verified_at_utc") or ""))
+        if verified_at > utc_now() + timedelta(minutes=2):
+            return False
+
+        expected = make_sandbox_readiness_token(
+            secret,
+            verified_at_utc=str(payload["verified_at_utc"]),
+            sandbox_account_name=expected_account_name,
+            lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
+            instrument=str(payload["instrument"]),
+        )
+        return hmac.compare_digest(
+            expected,
+            str(payload.get("readiness_token") or ""),
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def quotation_from_decimal(value: Decimal) -> dict[str, Any]:
