@@ -233,18 +233,6 @@ def validate_command(command: TradeCommand, config: Config) -> None:
             "is not implemented yet"
         )
 
-    if command.action == "BUY" and not has_sandbox_ready_marker(
-        imap_host=config.imap_host,
-        user=config.mail_user,
-        app_password=config.mail_app_password,
-        hmac_secret=config.hmac_secret,
-        expected_account_name=config.sandbox_account_name,
-    ):
-        raise RuntimeError(
-            "BUY locked: live Sandbox protective lifecycle smoke test "
-            "has not produced TRADE-SANDBOX-READY"
-        )
-
 
 def execute_command(command: TradeCommand, config: Config) -> dict:
     validate_command(command, config)
@@ -270,6 +258,19 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         token=config.tinvest_token,
         account_name=config.sandbox_account_name,
     )
+
+    if command.action == "BUY" and not has_sandbox_ready_marker(
+        imap_host=config.imap_host,
+        user=config.mail_user,
+        app_password=config.mail_app_password,
+        hmac_secret=config.hmac_secret,
+        expected_account_name=config.sandbox_account_name,
+        expected_account_id=client.account_id,
+    ):
+        raise RuntimeError(
+            "BUY locked: signed Sandbox readiness is missing or invalid "
+            "for the current Sandbox account"
+        )
     prepared = client.prepare_limit_order(
         ticker=command.ticker,
         class_code=command.class_code,
@@ -305,6 +306,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             trading_date=trading_date,
             hmac_secret=config.hmac_secret,
             expected_account_name=config.sandbox_account_name,
+            expected_account_id=client.account_id,
         )
         baseline_time = parse_iso_utc(
             str(baseline.get("generated_at_utc") or "")
