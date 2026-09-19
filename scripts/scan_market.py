@@ -52,6 +52,8 @@ def main():
             user=cfg.mail_user,
             app_password=cfg.mail_app_password,
             trading_date=trading_date,
+            hmac_secret=cfg.hmac_secret,
+            expected_account_name=cfg.sandbox_account_name,
         )
         baseline_time = parse_iso_utc(
             str(baseline.get("generated_at_utc") or "")
