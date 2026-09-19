@@ -19,6 +19,11 @@ def main():
     now_msk = now_utc.astimezone(MOSCOW)
     trading_date = now_msk.date().isoformat()
 
+    client = TInvestSandboxClient(
+        token=cfg.tinvest_token,
+        account_name=cfg.sandbox_account_name,
+    )
+
     if has_risk_baseline(
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
@@ -26,17 +31,13 @@ def main():
         trading_date=trading_date,
         hmac_secret=cfg.hmac_secret,
         expected_account_name=cfg.sandbox_account_name,
+        expected_account_id=client.account_id,
     ):
         print(json.dumps({
             "status": "risk_baseline_exists",
             "trading_date_moscow": trading_date,
         }, ensure_ascii=False))
         return
-
-    client = TInvestSandboxClient(
-        token=cfg.tinvest_token,
-        account_name=cfg.sandbox_account_name,
-    )
     portfolio = client.get_portfolio()
 
     payload = {
@@ -46,6 +47,7 @@ def main():
         "generated_at_utc": now_utc.isoformat(),
         "generated_at_moscow": now_msk.isoformat(),
         "sandbox_account_name": cfg.sandbox_account_name,
+        "sandbox_account_id": client.account_id,
         "portfolio": portfolio,
         "note": (
             "Start-of-session equity baseline for fail-closed daily P&L. "
