@@ -494,15 +494,32 @@ def monitor_lifecycle_state(
             return out
 
         child_statuses: list[dict[str, str]] = []
+        refreshed_children: list[dict[str, str]] = []
+        all_items = _known_protection_items(client, state)
         for child_info in children:
+            role = str(child_info.get("role") or "")
             child_id = str(child_info.get("exchange_order_id") or "")
+            if not child_id:
+                item = all_items.get(role)
+                if item is not None:
+                    child_id = _exchange_order_id(item)
+            refreshed_children.append(
+                {
+                    "role": role,
+                    "stop_order_id": str(
+                        child_info.get("stop_order_id") or ""
+                    ),
+                    "exchange_order_id": child_id,
+                }
+            )
             if not child_id:
                 out = dict(state)
                 out.update(
                     {
+                        "pending_children": refreshed_children,
                         "updated_at": now.isoformat(),
                         "child_wait_error": (
-                            "triggered stop has no exchange_order_id"
+                            "triggered stop has no exchange_order_id yet"
                         ),
                     }
                 )
@@ -528,6 +545,7 @@ def monitor_lifecycle_state(
             out.update(
                 {
                     "updated_at": now.isoformat(),
+                    "pending_children": refreshed_children,
                     "pending_child_statuses": child_statuses,
                     "remaining_lots": position_lots,
                 }
