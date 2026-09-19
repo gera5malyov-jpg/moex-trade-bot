@@ -539,6 +539,17 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             now=now,
         )
 
+        if command.probability_success_percent is not None:
+            if command.expected_value_rub is None:
+                raise RuntimeError(
+                    "Hard risk: calibrated probability requires expected_value_rub"
+                )
+            minimum_ev = hard_risk.net_risk_rub * Decimal("0.3")
+            if command.expected_value_rub < minimum_ev:
+                raise RuntimeError(
+                    "Hard risk: expected value below 0.3 x net risk"
+                )
+
     if command.action == "BUY":
         lifecycle_state = open_protected_long(
             client=client,
