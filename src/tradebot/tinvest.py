@@ -343,13 +343,19 @@ class TInvestSandboxClient:
         )
 
 
-    def get_order_state(self, order_id: str) -> dict[str, Any]:
+    def get_order_state(
+        self,
+        order_id: str,
+        *,
+        order_id_type: str = "ORDER_ID_TYPE_EXCHANGE",
+    ) -> dict[str, Any]:
         return self._post(
             self.SANDBOX_SERVICE + "/GetSandboxOrderState",
             {
                 "accountId": self.account_id,
                 "orderId": order_id,
                 "priceType": "PRICE_TYPE_CURRENCY",
+                "orderIdType": order_id_type,
             },
         )
 
