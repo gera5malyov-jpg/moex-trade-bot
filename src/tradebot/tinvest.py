@@ -342,6 +342,134 @@ class TInvestSandboxClient:
             {"accountId": self.account_id, "currency": "RUB"},
         )
 
+
+    def get_order_state(self, order_id: str) -> dict[str, Any]:
+        return self._post(
+            self.SANDBOX_SERVICE + "/GetSandboxOrderState",
+            {
+                "accountId": self.account_id,
+                "orderId": order_id,
+                "priceType": "PRICE_TYPE_CURRENCY",
+            },
+        )
+
+    def get_stop_orders(
+        self,
+        *,
+        status: str = "STOP_ORDER_STATUS_ALL",
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "accountId": self.account_id,
+            "status": status,
+        }
+        if from_time is not None:
+            payload["from"] = from_time.isoformat()
+        if to_time is not None:
+            payload["to"] = to_time.isoformat()
+        data = self._post(
+            self.SANDBOX_SERVICE + "/GetSandboxStopOrders",
+            payload,
+        )
+        return data.get("stopOrders") or data.get("stop_orders") or []
+
+    def post_stop_order(
+        self,
+        *,
+        instrument_uid: str,
+        quantity_lots: int,
+        stop_price: Decimal,
+        stop_order_type: str,
+        idempotency_seed: str,
+    ) -> dict[str, Any]:
+        if quantity_lots <= 0:
+            raise ValueError("quantity_lots must be positive")
+        if not stop_price.is_finite() or stop_price <= 0:
+            raise ValueError("stop_price must be finite and positive")
+        if stop_order_type not in {
+            "STOP_ORDER_TYPE_STOP_LOSS",
+            "STOP_ORDER_TYPE_TAKE_PROFIT",
+        }:
+            raise ValueError("Unsupported protective stop order type")
+
+        request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_seed))
+        payload: dict[str, Any] = {
+            "quantity": str(quantity_lots),
+            "stopPrice": quotation_from_decimal(stop_price),
+            "direction": "STOP_ORDER_DIRECTION_SELL",
+            "accountId": self.account_id,
+            "expirationType": "STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_CANCEL",
+            "stopOrderType": stop_order_type,
+            "instrumentId": instrument_uid,
+            "priceType": "PRICE_TYPE_CURRENCY",
+            "orderId": request_id,
+            "confirmMarginTrade": False,
+        }
+        if stop_order_type == "STOP_ORDER_TYPE_TAKE_PROFIT":
+            payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_MARKET"
+            payload["takeProfitType"] = "TAKE_PROFIT_TYPE_REGULAR"
+
+        result = self._post(
+            self.SANDBOX_SERVICE + "/PostSandboxStopOrder",
+            payload,
+        )
+        return {
+            "request_order_id": request_id,
+            "stop_order": result,
+        }
+
+    def cancel_stop_order(self, stop_order_id: str) -> dict[str, Any]:
+        return self._post(
+            self.SANDBOX_SERVICE + "/CancelSandboxStopOrder",
+            {
+                "accountId": self.account_id,
+                "stopOrderId": stop_order_id,
+            },
+        )
+
+    def get_position_lots(
+        self,
+        *,
+        instrument_uid: str,
+        lot_size: int,
+    ) -> int:
+        if lot_size <= 0:
+            raise ValueError("lot_size must be positive")
+        portfolio = self.get_portfolio()
+        for position in portfolio.get("positions") or []:
+            uid = str(
+                position.get("instrumentUid")
+                or position.get("instrument_uid")
+                or ""
+            )
+            if uid != instrument_uid:
+                continue
+
+            qlots = position.get("quantityLots") or position.get("quantity_lots")
+            if isinstance(qlots, dict):
+                quantity_lots = (
+                    Decimal(str(qlots.get("units", "0")))
+                    + Decimal(str(qlots.get("nano", 0)))
+                    / Decimal("1000000000")
+                )
+                if quantity_lots < 0 or quantity_lots != quantity_lots.to_integral_value():
+                    raise RuntimeError("Unexpected non-integer long position lots")
+                return int(quantity_lots)
+
+            quantity = position.get("quantity")
+            if isinstance(quantity, dict):
+                units = (
+                    Decimal(str(quantity.get("units", "0")))
+                    + Decimal(str(quantity.get("nano", 0)))
+                    / Decimal("1000000000")
+                )
+                lots = units / Decimal(lot_size)
+                if lots < 0 or lots != lots.to_integral_value():
+                    raise RuntimeError("Unexpected non-integer long position")
+                return int(lots)
+        return 0
+
     def get_max_lots(
         self,
         *,
