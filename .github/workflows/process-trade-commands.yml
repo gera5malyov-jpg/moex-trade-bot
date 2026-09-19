@@ -2,9 +2,6 @@ name: Process trade commands
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/process-trade-commands.yml"
 
 jobs:
   process:
