@@ -2,6 +2,9 @@ name: Daily sandbox trading snapshot
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/daily-snapshot.yml"
   schedule:
     # 23:52 Moscow = 20:52 UTC.
     - cron: "52 20 * * 1-5"
