@@ -14,7 +14,7 @@ def _required(name: str) -> str:
 @dataclass(frozen=True)
 class Config:
     tinvest_token: str
-    sandbox_account_id: str
+    sandbox_account_name: str
     trading_enabled: bool
     hmac_secret: str
     command_max_age_minutes: int
@@ -34,7 +34,10 @@ class Config:
 
         return cls(
             tinvest_token=_required("TINVEST_TOKEN"),
-            sandbox_account_id=_required("TINVEST_SANDBOX_ACCOUNT_ID"),
+            sandbox_account_name=os.getenv(
+                "TINVEST_SANDBOX_ACCOUNT_NAME",
+                "github-moex-trade-bot",
+            ).strip(),
             trading_enabled=os.getenv("TRADING_ENABLED", "false").lower() == "true",
             hmac_secret=secret,
             command_max_age_minutes=int(os.getenv("COMMAND_MAX_AGE_MINUTES", "15")),
