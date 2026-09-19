@@ -3,9 +3,11 @@ name: Process trade commands
 on:
   workflow_dispatch:
   schedule:
-    # Every 5 minutes on weekdays, 06:00–23:55 MSK; broker status remains authoritative.
-    # GitHub cron is UTC: 03:00–20:55 UTC.
-    - cron: "*/5 3-20 * * 1-5"
+    # Every 5 minutes on weekdays, 09:45–18:45 MSK.
+    # Broker-side STOP/TAKE remains active outside GitHub monitor hours.
+    # UTC window: 06:45–15:45. Cron includes 06:00–15:55, while the scripts
+    # remain fail-closed outside executable windows.
+    - cron: "*/5 6-15 * * 1-5"
 
 permissions:
   contents: read
