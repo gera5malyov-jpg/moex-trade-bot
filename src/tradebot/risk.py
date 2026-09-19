@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -9,6 +10,10 @@ from .protocol import TradeCommand, parse_iso_utc
 
 RISK_PER_TRADE = Decimal("0.0025")
 DAILY_STOP = Decimal("0.0075")
+WEEKLY_STOP = Decimal("0.02")
+MONTHLY_STOP = Decimal("0.04")
+DRAWDOWN_RISK_REDUCTION_TRIGGER = Decimal("0.03")
+DRAWDOWN_RISK_MULTIPLIER = Decimal("0.5")
 MAX_POSITION_SHARE = Decimal("0.10")
 MAX_OPEN_POSITIONS = 2
 MIN_NET_RISK_REWARD = Decimal("2.0")
@@ -200,6 +205,67 @@ def compute_daily_pnl_rub(
 
     return current_equity - baseline_equity
 
+def compute_period_pnl_rub(
+    *,
+    current_portfolio: dict,
+    start_equity_rub: Decimal,
+    operations_since_start: dict,
+    period_name: str,
+) -> Decimal:
+    if (
+        not start_equity_rub.is_finite()
+        or start_equity_rub <= 0
+    ):
+        raise RuntimeError(
+            f"Hard risk: {period_name} start equity is invalid"
+        )
+    current_equity = _require_money(
+        current_portfolio,
+        ("totalAmountPortfolio", "total_amount_portfolio"),
+        "current portfolio capital",
+    )
+    items = (
+        operations_since_start.get("items")
+        or operations_since_start.get("operations")
+        or []
+    )
+    for operation in items:
+        op_type = str(operation.get("type") or "").upper()
+        if op_type in {"OPERATION_TYPE_INPUT", "OPERATION_TYPE_OUTPUT"}:
+            raise RuntimeError(
+                f"Hard risk: account funding/withdrawal during {period_name}"
+            )
+    return current_equity - start_equity_rub
+
+
+def latest_strategy_close_time(
+    lifecycle_states: list[dict[str, Any]],
+    *,
+    since_utc: str,
+) -> datetime | None:
+    since = parse_iso_utc(since_utc)
+    closed_statuses = {
+        "CLOSED_STOP_LOSS",
+        "CLOSED_TAKE_PROFIT",
+        "CLOSED_TIME_STOP",
+        "CLOSED_FORCE_EXIT",
+        "CLOSED_POSITION_GONE",
+    }
+    times: list[datetime] = []
+    for state in lifecycle_states:
+        if str(state.get("lifecycle_kind") or "") != "STRATEGY":
+            continue
+        if str(state.get("status") or "") not in closed_statuses:
+            continue
+        raw = str(state.get("updated_at") or "")
+        if not raw:
+            continue
+        dt = parse_iso_utc(raw)
+        if dt >= since:
+            times.append(dt)
+    return max(times) if times else None
+
+
 @dataclass(frozen=True)
 class RiskCheck:
     capital_rub: Decimal
@@ -212,6 +278,10 @@ class RiskCheck:
     net_risk_rub: Decimal
     net_reward_rub: Decimal
     risk_reward_net: Decimal
+    weekly_pnl_rub: Decimal
+    monthly_pnl_rub: Decimal
+    drawdown_from_high_water: Decimal
+    risk_budget_multiplier: Decimal
 
 
 def validate_buy_hard_risk(
@@ -223,7 +293,14 @@ def validate_buy_hard_risk(
     min_price_increment: Decimal,
     market_spread_per_unit: Decimal,
     daily_pnl_rub: Decimal | None = None,
+    weekly_pnl_rub: Decimal | None = None,
+    monthly_pnl_rub: Decimal | None = None,
+    week_start_equity_rub: Decimal | None = None,
+    month_start_equity_rub: Decimal | None = None,
+    high_water_mark_rub: Decimal | None = None,
     consecutive_losses: int | None = None,
+    last_strategy_close_at: datetime | None = None,
+    now: datetime | None = None,
 ) -> RiskCheck:
     if command.action != "BUY":
         raise ValueError("Hard-risk BUY validator requires BUY command")
@@ -262,10 +339,69 @@ def validate_buy_hard_risk(
     if daily_yield <= -(capital * DAILY_STOP):
         raise RuntimeError("Hard risk: daily loss limit reached")
 
+    if (
+        weekly_pnl_rub is None
+        or week_start_equity_rub is None
+        or monthly_pnl_rub is None
+        or month_start_equity_rub is None
+        or high_water_mark_rub is None
+    ):
+        raise RuntimeError(
+            "Hard risk: weekly/monthly/high-water context is unavailable"
+        )
+
+    weekly_pnl = Decimal(weekly_pnl_rub)
+    monthly_pnl = Decimal(monthly_pnl_rub)
+    week_start = Decimal(week_start_equity_rub)
+    month_start = Decimal(month_start_equity_rub)
+    high_water = Decimal(high_water_mark_rub)
+    for value, name in (
+        (weekly_pnl, "weekly P&L"),
+        (monthly_pnl, "monthly P&L"),
+        (week_start, "week start equity"),
+        (month_start, "month start equity"),
+        (high_water, "high water mark"),
+    ):
+        if not value.is_finite():
+            raise RuntimeError(f"Hard risk: {name} is not finite")
+
+    if week_start <= 0 or month_start <= 0 or high_water <= 0:
+        raise RuntimeError("Hard risk: invalid period/high-water equity")
+
+    if weekly_pnl <= -(week_start * WEEKLY_STOP):
+        raise RuntimeError("Hard risk: weekly loss limit reached")
+    if monthly_pnl <= -(month_start * MONTHLY_STOP):
+        raise RuntimeError("Hard risk: monthly loss limit reached")
+
+    effective_high_water = max(high_water, capital)
+    drawdown = (
+        (effective_high_water - capital) / effective_high_water
+    )
+    risk_budget_multiplier = Decimal("1")
+    if drawdown > DRAWDOWN_RISK_REDUCTION_TRIGGER:
+        risk_budget_multiplier = DRAWDOWN_RISK_MULTIPLIER
+
     if consecutive_losses is None:
         raise RuntimeError("Hard risk: consecutive loss count is unavailable")
     if consecutive_losses >= 3:
         raise RuntimeError("Hard risk: 3 consecutive losses reached")
+    if consecutive_losses >= 2:
+        if last_strategy_close_at is None:
+            raise RuntimeError(
+                "Hard risk: last loss timestamp unavailable after 2 losses"
+            )
+        if last_strategy_close_at.tzinfo is None:
+            raise RuntimeError(
+                "Hard risk: last loss timestamp has no timezone"
+            )
+        current_time = now or datetime.now(timezone.utc)
+        if current_time < (
+            last_strategy_close_at.astimezone(timezone.utc)
+            + timedelta(hours=2)
+        ):
+            raise RuntimeError(
+                "Hard risk: 2-loss cooldown is still active"
+            )
 
     open_positions = _positive_position_count(portfolio)
     if open_positions >= MAX_OPEN_POSITIONS:
@@ -337,7 +473,11 @@ def validate_buy_hard_risk(
         )
 
     max_loss = net_risk
-    risk_budget = capital * RISK_PER_TRADE
+    risk_budget = (
+        capital
+        * RISK_PER_TRADE
+        * risk_budget_multiplier
+    )
     if max_loss > risk_budget:
         raise RuntimeError("Hard risk: max loss exceeds 0.25% of capital")
 
@@ -352,4 +492,8 @@ def validate_buy_hard_risk(
         net_risk_rub=net_risk,
         net_reward_rub=net_reward,
         risk_reward_net=risk_reward_net,
+        weekly_pnl_rub=weekly_pnl,
+        monthly_pnl_rub=monthly_pnl,
+        drawdown_from_high_water=drawdown,
+        risk_budget_multiplier=risk_budget_multiplier,
     )
