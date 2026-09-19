@@ -1,21 +1,20 @@
-name: Process trade commands
+name: Daily sandbox trading snapshot
 
 on:
   workflow_dispatch:
   schedule:
-    # Every 5 minutes on Moscow trading weekdays, 06:00–23:55 MSK.
-    # GitHub cron is UTC: 03:00–20:55 UTC.
-    - cron: "*/5 3-20 * * 1-5"
+    # 23:52 Moscow = 20:52 UTC.
+    - cron: "52 20 * * 1-5"
 
 permissions:
   contents: read
 
 concurrency:
-  group: process-trade-commands
+  group: daily-sandbox-trading-snapshot
   cancel-in-progress: false
 
 jobs:
-  process:
+  snapshot:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -27,16 +26,13 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Process commands
+      - name: Send broker snapshot to Gmail
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: ${{ vars.TRADING_ENABLED || 'false' }}
-          COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '15' }}
+          TRADING_ENABLED: "false"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/process_commands.py
+        run: python scripts/daily_snapshot.py
