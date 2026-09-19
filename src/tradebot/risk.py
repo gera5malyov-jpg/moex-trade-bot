@@ -379,7 +379,9 @@ def validate_buy_hard_risk(
     )
     risk_budget_multiplier = Decimal("1")
     if drawdown > DRAWDOWN_RISK_REDUCTION_TRIGGER:
-        risk_budget_multiplier = DRAWDOWN_RISK_MULTIPLIER
+        risk_budget_multiplier *= DRAWDOWN_RISK_MULTIPLIER
+    if command.market_regime == "UNKNOWN":
+        risk_budget_multiplier *= Decimal("0.5")
 
     if consecutive_losses is None:
         raise RuntimeError("Hard risk: consecutive loss count is unavailable")
