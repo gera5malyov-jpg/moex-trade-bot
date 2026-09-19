@@ -303,6 +303,8 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             user=config.mail_user,
             app_password=config.mail_app_password,
             trading_date=trading_date,
+            hmac_secret=config.hmac_secret,
+            expected_account_name=config.sandbox_account_name,
         )
         baseline_time = parse_iso_utc(
             str(baseline.get("generated_at_utc") or "")
@@ -345,6 +347,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             recipient=config.mail_user,
             signal_id=command.signal_id,
             payload=lifecycle_state,
+            hmac_secret=config.hmac_secret,
         )
         broker_result: dict = {
             "lifecycle_state": lifecycle_state,
