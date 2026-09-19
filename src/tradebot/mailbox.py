@@ -11,6 +11,8 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Iterable
 
+from .protocol import verify_sandbox_readiness_payload
+
 
 def _decode_header(value: str | None) -> str:
     if not value:
@@ -462,14 +464,58 @@ def has_sandbox_ready_marker(
     imap_host: str,
     user: str,
     app_password: str,
+    hmac_secret: str,
+    expected_account_name: str,
 ) -> bool:
-    return _imap_has_exact_subject_from(
-        imap_host=imap_host,
-        user=user,
-        app_password=app_password,
-        subject="[TRADE-SANDBOX-READY]",
-        allowed_from=user,
-    )
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    client.select("INBOX", readonly=True)
+    try:
+        status, data = client.search(
+            None,
+            "SUBJECT",
+            '"[TRADE-SANDBOX-READY]"',
+        )
+        if status != "OK":
+            raise RuntimeError("IMAP Sandbox readiness search failed")
+
+        matches: list[tuple[int, bytes]] = []
+        for msg_id in data[0].split():
+            status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not fetched:
+                continue
+            raw = fetched[0][1]
+            msg = email.message_from_bytes(raw)
+            sender = parseaddr(msg.get("From", ""))[1].lower()
+            subject = _decode_header(msg.get("Subject")).strip()
+            if (
+                sender == user.lower()
+                and subject == "[TRADE-SANDBOX-READY]"
+            ):
+                matches.append((int(msg_id), raw))
+
+        if not matches:
+            return False
+
+        _, raw = max(matches, key=lambda item: item[0])
+        try:
+            payload = json.loads(
+                extract_json_object(
+                    _extract_text(email.message_from_bytes(raw))
+                )
+            )
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+
+        return verify_sandbox_readiness_payload(
+            hmac_secret,
+            payload,
+            expected_account_name=expected_account_name,
+        )
+    finally:
+        client.logout()
 
 
 def has_execution_receipt(
