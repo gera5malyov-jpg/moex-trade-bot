@@ -482,6 +482,7 @@ def load_risk_baseline(
     trading_date: str,
     hmac_secret: str,
     expected_account_name: str,
+    expected_account_id: str,
 ) -> dict:
     subject = f"[TRADE-RISK-BASELINE] {trading_date}"
     client = imaplib.IMAP4_SSL(imap_host, 993)
@@ -531,6 +532,11 @@ def load_risk_baseline(
                 != expected_account_name
             ):
                 continue
+            if (
+                str(payload.get("sandbox_account_id") or "")
+                != expected_account_id
+            ):
+                continue
             matches.append(payload)
 
         if len(matches) != 1:
@@ -551,6 +557,7 @@ def has_sandbox_ready_marker(
     app_password: str,
     hmac_secret: str,
     expected_account_name: str,
+    expected_account_id: str,
 ) -> bool:
     client = imaplib.IMAP4_SSL(imap_host, 993)
     client.login(user, app_password)
@@ -598,6 +605,7 @@ def has_sandbox_ready_marker(
             hmac_secret,
             payload,
             expected_account_name=expected_account_name,
+            expected_account_id=expected_account_id,
         )
     finally:
         client.logout()
