@@ -32,6 +32,7 @@ jobs:
           SCANNER_MAX_PER_TYPE: "1"
           SCANNER_MAX_SIGNALS: "2"
           MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_TO: anthony-19951936@outlook.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/scan_market.py
