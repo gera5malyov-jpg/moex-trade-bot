@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,8 @@ from .lifecycle import open_protected_long
 from .risk import (
     compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
+    compute_period_pnl_rub,
+    latest_strategy_close_time,
     validate_buy_hard_risk,
 )
 from .tinvest import TInvestSandboxClient
@@ -162,7 +164,7 @@ def _live_execution_market(
         raise RuntimeError("Execution refused: order book timestamp unavailable")
     ts = parse_iso_utc(orderbook_ts)
     age_seconds = (utc_now() - ts).total_seconds()
-    if age_seconds < -5 or age_seconds > 120:
+    if age_seconds < -5 or age_seconds > 60:
         raise RuntimeError("Execution refused: order book is stale")
 
     if best_ask > limit_price:
@@ -277,6 +279,22 @@ def _validate_sector_concentration(
                 "Hard risk: sector concentration blocked (" + new_sector + ")"
             )
 
+def _validate_new_entry_window(now) -> None:
+    moscow = now.astimezone(ZoneInfo("Europe/Moscow"))
+    if moscow.weekday() >= 5:
+        raise RuntimeError(
+            "BUY locked: weekend session is not allowed"
+        )
+    current = moscow.time().replace(tzinfo=None)
+    # MOEX main session begins at 09:50 MSK. Strategy excludes the first
+    # 15 minutes and stops accepting new entries 45 minutes before the
+    # default 18:30 intraday force-exit.
+    if current < time(10, 5) or current >= time(17, 45):
+        raise RuntimeError(
+            "BUY locked: outside allowed 10:05-17:45 MSK entry window"
+        )
+
+
 def validate_command(command: TradeCommand, config: Config) -> None:
     if command.protocol_version != PROTOCOL_VERSION:
         raise ValueError("Unsupported protocol_version")
@@ -331,6 +349,9 @@ def validate_command(command: TradeCommand, config: Config) -> None:
 
     if command.action != "SKIP" and not config.trading_enabled:
         raise RuntimeError("TRADING_ENABLED is false")
+
+    if command.action == "BUY":
+        _validate_new_entry_window(now)
 
     if command.action == "BUY" and command.time_stop is not None:
         if command.time_stop <= now:
@@ -443,6 +464,37 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             baseline_payload=baseline,
             operations_since_baseline=operations,
         )
+
+        week_start_time = parse_iso_utc(
+            str(baseline.get("week_start_generated_at_utc") or "")
+        )
+        month_start_time = parse_iso_utc(
+            str(baseline.get("month_start_generated_at_utc") or "")
+        )
+        week_operations = client.get_operations_by_cursor(
+            from_time=week_start_time,
+            to_time=now,
+        )
+        month_operations = client.get_operations_by_cursor(
+            from_time=month_start_time,
+            to_time=now,
+        )
+        weekly_pnl = compute_period_pnl_rub(
+            current_portfolio=prepared["portfolio"],
+            start_equity_rub=Decimal(
+                str(baseline.get("week_start_equity_rub"))
+            ),
+            operations_since_start=week_operations,
+            period_name="week",
+        )
+        monthly_pnl = compute_period_pnl_rub(
+            current_portfolio=prepared["portfolio"],
+            start_equity_rub=Decimal(
+                str(baseline.get("month_start_equity_rub"))
+            ),
+            operations_since_start=month_operations,
+            period_name="month",
+        )
         lifecycle_states = load_latest_lifecycle_states(
             imap_host=config.imap_host,
             user=config.mail_user,
@@ -451,6 +503,10 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             expected_account_id=client.account_id,
         )
         consecutive_losses = compute_consecutive_losses_from_lifecycle(
+            lifecycle_states,
+            since_utc=str(baseline["generated_at_utc"]),
+        )
+        last_close_at = latest_strategy_close_time(
             lifecycle_states,
             since_utc=str(baseline["generated_at_utc"]),
         )
@@ -467,7 +523,20 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             ),
             market_spread_per_unit=live_spread,
             daily_pnl_rub=daily_pnl,
+            weekly_pnl_rub=weekly_pnl,
+            monthly_pnl_rub=monthly_pnl,
+            week_start_equity_rub=Decimal(
+                str(baseline.get("week_start_equity_rub"))
+            ),
+            month_start_equity_rub=Decimal(
+                str(baseline.get("month_start_equity_rub"))
+            ),
+            high_water_mark_rub=Decimal(
+                str(baseline.get("high_water_mark_rub"))
+            ),
             consecutive_losses=consecutive_losses,
+            last_strategy_close_at=last_close_at,
+            now=now,
         )
 
     if command.action == "BUY":
@@ -523,6 +592,14 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
                 "net_risk_rub": str(hard_risk.net_risk_rub),
                 "net_reward_rub": str(hard_risk.net_reward_rub),
                 "risk_reward_net": str(hard_risk.risk_reward_net),
+                "weekly_pnl_rub": str(hard_risk.weekly_pnl_rub),
+                "monthly_pnl_rub": str(hard_risk.monthly_pnl_rub),
+                "drawdown_from_high_water": str(
+                    hard_risk.drawdown_from_high_water
+                ),
+                "risk_budget_multiplier": str(
+                    hard_risk.risk_budget_multiplier
+                ),
             }
             if hard_risk is not None
             else None
