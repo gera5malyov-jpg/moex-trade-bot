@@ -200,7 +200,12 @@ def main():
                 continue
 
             if _terminal_rejection(exc):
-                if _valid_command_auth(command, cfg):
+                # A wrong subject is not a command execution outcome and must
+                # not reserve the signal_id through an execution receipt.
+                if (
+                    not str(exc).startswith("Subject mismatch:")
+                    and _valid_command_auth(command, cfg)
+                ):
                     _send_rejection_receipt(
                         cfg=cfg,
                         command=command,
