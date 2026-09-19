@@ -300,6 +300,37 @@ def _compact_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _money_currency_total(
+    items: list[dict[str, Any]],
+    currency: str,
+) -> Decimal:
+    total = Decimal("0")
+    for item in items:
+        if str(item.get("currency") or "").lower() != currency.lower():
+            continue
+        total += (
+            Decimal(str(item.get("units", "0")))
+            + Decimal(str(item.get("nano", 0)))
+            / Decimal("1000000000")
+        )
+    return total
+
+
+def _compact_account_positions(data: dict[str, Any]) -> dict[str, Any]:
+    money = data.get("money") or []
+    blocked = data.get("blocked") or []
+    rub_money = _money_currency_total(money, "rub")
+    rub_blocked = _money_currency_total(blocked, "rub")
+    return {
+        "rub_money": str(rub_money),
+        "rub_blocked": str(rub_blocked),
+        "available_cash_rub": str(rub_money - rub_blocked),
+        "securities": data.get("securities") or [],
+        "futures": data.get("futures") or [],
+        "options": data.get("options") or [],
+    }
+
 def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
     closes = [
         quote_to_decimal(c.get("close"))
@@ -403,6 +434,7 @@ def enrich_candidate(
         "technical_5m": _candle_summary(candles_5m),
         "technical_15m": _candle_summary(candles_15m),
         "portfolio": _compact_portfolio(client.get_portfolio()),
+        "account_positions": _compact_account_positions(client.get_positions()),
         "raw_order_book_top5": {
             "bids": bids[:5],
             "asks": asks[:5],
