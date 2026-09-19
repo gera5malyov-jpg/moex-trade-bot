@@ -24,6 +24,8 @@ def main():
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
         trading_date=trading_date,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_name=cfg.sandbox_account_name,
     ):
         print(json.dumps({
             "status": "risk_baseline_exists",
@@ -38,7 +40,7 @@ def main():
     portfolio = client.get_portfolio()
 
     payload = {
-        "baseline_version": "1",
+        "baseline_version": "2",
         "environment": "TINVEST_SANDBOX",
         "trading_date_moscow": trading_date,
         "generated_at_utc": now_utc.isoformat(),
@@ -58,6 +60,7 @@ def main():
         recipient=cfg.mail_user,
         trading_date=trading_date,
         payload=payload,
+        hmac_secret=cfg.hmac_secret,
     )
 
     print(json.dumps({
