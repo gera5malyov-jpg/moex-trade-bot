@@ -7,11 +7,15 @@ from tradebot.config import Config
 from tradebot.mailbox import (
     has_recent_signal_for_instrument,
     has_sandbox_ready_marker,
+    load_latest_lifecycle_states,
     load_risk_baseline,
     send_signal_email,
 )
 from tradebot.protocol import Signal, parse_iso_utc
-from tradebot.risk import compute_consecutive_losses, compute_daily_pnl_rub
+from tradebot.risk import (
+    compute_consecutive_losses_from_lifecycle,
+    compute_daily_pnl_rub,
+)
 from tradebot.scanner import enrich_candidate, scan_candidates
 from tradebot.tinvest import TInvestSandboxClient
 
@@ -155,6 +159,13 @@ def main():
             from_time=baseline_time,
             to_time=now_utc,
         )
+        lifecycle_states = load_latest_lifecycle_states(
+            imap_host=cfg.imap_host,
+            user=cfg.mail_user,
+            app_password=cfg.mail_app_password,
+            hmac_secret=cfg.hmac_secret,
+            expected_account_id=client.account_id,
+        )
         hard_risk_context.update(
             {
                 "daily_pnl_rub": str(
@@ -164,7 +175,12 @@ def main():
                         operations_since_baseline=operations,
                     )
                 ),
-                "consecutive_losses": compute_consecutive_losses(operations),
+                "consecutive_losses": (
+                    compute_consecutive_losses_from_lifecycle(
+                        lifecycle_states,
+                        since_utc=str(baseline["generated_at_utc"]),
+                    )
+                ),
                 "baseline_generated_at_utc": baseline.get("generated_at_utc"),
             }
         )
