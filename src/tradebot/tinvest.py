@@ -37,6 +37,9 @@ class TInvestSandboxClient:
     INSTRUMENTS_SERVICE = (
         BASE + "/tinkoff.public.invest.api.contract.v1.InstrumentsService"
     )
+    MARKET_DATA_SERVICE = (
+        BASE + "/tinkoff.public.invest.api.contract.v1.MarketDataService"
+    )
 
     def __init__(
         self,
@@ -91,6 +94,101 @@ class TInvestSandboxClient:
         if not account_id:
             raise RuntimeError("Sandbox account found but account ID is missing")
         return account_id
+
+    def list_instruments(self, instrument_type: str) -> list[dict[str, Any]]:
+        endpoint_map = {
+            "share": "Shares",
+            "etf": "Etfs",
+            "bond": "Bonds",
+            "currency": "Currencies",
+            "futures": "Futures",
+            "option": "Options",
+            "dfa": "Dfas",
+        }
+        endpoint = endpoint_map.get(instrument_type)
+        if endpoint is None:
+            raise ValueError(f"Unsupported instrument_type: {instrument_type}")
+
+        payload: dict[str, Any]
+        if instrument_type == "dfa":
+            payload = {}
+        else:
+            payload = {"instrumentStatus": "INSTRUMENT_STATUS_BASE"}
+
+        data = self._post(
+            self.INSTRUMENTS_SERVICE + "/" + endpoint,
+            payload,
+        )
+        instruments = data.get("instruments") or []
+        if not isinstance(instruments, list):
+            raise RuntimeError("Unexpected instruments response")
+        return instruments
+
+    def get_last_prices(self, instrument_uids: list[str]) -> list[dict[str, Any]]:
+        if len(instrument_uids) > 100:
+            raise ValueError("GetLastPrices batch must contain <= 100 instruments")
+        data = self._post(
+            self.MARKET_DATA_SERVICE + "/GetLastPrices",
+            {
+                "instrumentId": instrument_uids,
+                "lastPriceType": "LAST_PRICE_EXCHANGE",
+                "instrumentStatus": "INSTRUMENT_STATUS_BASE",
+            },
+        )
+        return data.get("lastPrices") or data.get("last_prices") or []
+
+    def get_close_prices(self, instrument_uids: list[str]) -> list[dict[str, Any]]:
+        if len(instrument_uids) > 100:
+            raise ValueError("GetClosePrices batch must contain <= 100 instruments")
+        data = self._post(
+            self.MARKET_DATA_SERVICE + "/GetClosePrices",
+            {
+                "instruments": [
+                    {"instrumentId": uid}
+                    for uid in instrument_uids
+                ],
+                "instrumentStatus": "INSTRUMENT_STATUS_BASE",
+            },
+        )
+        return data.get("closePrices") or data.get("close_prices") or []
+
+    def get_order_book(
+        self,
+        instrument_uid: str,
+        depth: int = 10,
+    ) -> dict[str, Any]:
+        if depth not in {1, 10, 20, 30, 40, 50}:
+            raise ValueError("Unsupported order book depth")
+        return self._post(
+            self.MARKET_DATA_SERVICE + "/GetOrderBook",
+            {"instrumentId": instrument_uid, "depth": depth},
+        )
+
+    def get_trading_status(self, instrument_uid: str) -> dict[str, Any]:
+        return self._post(
+            self.MARKET_DATA_SERVICE + "/GetTradingStatus",
+            {"instrumentId": instrument_uid},
+        )
+
+    def get_candles(
+        self,
+        *,
+        instrument_uid: str,
+        from_time: datetime,
+        to_time: datetime,
+        interval: str,
+    ) -> list[dict[str, Any]]:
+        data = self._post(
+            self.MARKET_DATA_SERVICE + "/GetCandles",
+            {
+                "instrumentId": instrument_uid,
+                "from": from_time.isoformat(),
+                "to": to_time.isoformat(),
+                "interval": interval,
+                "candleSourceType": "CANDLE_SOURCE_EXCHANGE",
+            },
+        )
+        return data.get("candles") or []
 
     def find_instrument(self, query: str) -> dict[str, Any]:
         """
