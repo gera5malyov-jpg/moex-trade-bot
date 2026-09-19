@@ -108,6 +108,31 @@ def _validate_executable_instrument(
         )
 
 
+def _validate_live_trading_status(
+    *,
+    client: TInvestSandboxClient,
+    instrument_uid: str,
+) -> None:
+    status = client.get_trading_status(instrument_uid)
+    trading_status = str(
+        status.get("tradingStatus")
+        or status.get("trading_status")
+        or ""
+    ).upper()
+    if trading_status != "SECURITY_TRADING_STATUS_NORMAL_TRADING":
+        raise RuntimeError(
+            "Execution refused: trading status is not NORMAL_TRADING"
+        )
+    if status.get("limitOrderAvailableFlag") is not True:
+        raise RuntimeError(
+            "Execution refused: LIMIT orders are not currently available"
+        )
+    if status.get("apiTradeAvailableFlag") is False:
+        raise RuntimeError(
+            "Execution refused: API trading status is unavailable"
+        )
+
+
 def _position_quantity(position: dict) -> Decimal:
     value = position.get("quantity")
     if not isinstance(value, dict):
@@ -221,12 +246,13 @@ def validate_command(command: TradeCommand, config: Config) -> None:
     if command.action != "SKIP" and not config.trading_enabled:
         raise RuntimeError("TRADING_ENABLED is false")
 
-    if (
-        command.action == "BUY"
-        and command.time_stop is not None
-        and command.time_stop <= now
-    ):
-        raise RuntimeError("BUY locked: time_stop is not in the future")
+    if command.action == "BUY" and command.time_stop is not None:
+        if command.time_stop <= now:
+            raise RuntimeError("BUY locked: time_stop is not in the future")
+        if command.time_stop > now + timedelta(hours=36):
+            raise RuntimeError(
+                "BUY locked: time_stop exceeds 36-hour short-term horizon"
+            )
 
     if command.action == "BUY" and not PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED:
         raise RuntimeError(
@@ -284,6 +310,10 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
     _validate_executable_instrument(
         instrument=prepared["instrument"],
         command=command,
+    )
+    _validate_live_trading_status(
+        client=client,
+        instrument_uid=command.instrument_uid,
     )
 
     hard_risk = None
