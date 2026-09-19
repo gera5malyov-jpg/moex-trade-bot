@@ -26,7 +26,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Scan and send analysis-only candidates
+      - name: Scan and send reviewed candidates
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
