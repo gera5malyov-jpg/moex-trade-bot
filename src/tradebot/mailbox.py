@@ -11,7 +11,12 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Iterable
 
-from .protocol import verify_sandbox_readiness_payload
+from .protocol import (
+    PROTECTIVE_LIFECYCLE_VERSION,
+    make_internal_journal_token,
+    verify_internal_journal_token,
+    verify_sandbox_readiness_payload,
+)
 
 
 def _decode_header(value: str | None) -> str:
@@ -146,10 +151,16 @@ def send_execution_receipt(
     recipient: str,
     signal_id: str,
     payload: dict,
+    hmac_secret: str,
 ) -> None:
     # Never include auth_token or broker access tokens in the journal.
     safe = dict(payload)
     safe.pop("auth_token", None)
+    safe["journal_token"] = make_internal_journal_token(
+        hmac_secret,
+        purpose="execution_receipt",
+        payload=safe,
+    )
     _send_text_email(
         smtp_host=smtp_host,
         user=user,
@@ -187,14 +198,22 @@ def send_lifecycle_state_email(
     recipient: str,
     signal_id: str,
     payload: dict,
+    hmac_secret: str,
 ) -> None:
+    signed = dict(payload)
+    signed.pop("journal_token", None)
+    signed["journal_token"] = make_internal_journal_token(
+        hmac_secret,
+        purpose="lifecycle_state",
+        payload=signed,
+    )
     _send_text_email(
         smtp_host=smtp_host,
         user=user,
         app_password=app_password,
         recipient=recipient,
         subject=f"[TRADE-LIFECYCLE] {signal_id}",
-        body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        body=json.dumps(signed, ensure_ascii=False, indent=2, default=str),
     )
 
 
@@ -206,14 +225,22 @@ def send_risk_baseline_email(
     recipient: str,
     trading_date: str,
     payload: dict,
+    hmac_secret: str,
 ) -> None:
+    signed = dict(payload)
+    signed.pop("journal_token", None)
+    signed["journal_token"] = make_internal_journal_token(
+        hmac_secret,
+        purpose="risk_baseline",
+        payload=signed,
+    )
     _send_text_email(
         smtp_host=smtp_host,
         user=user,
         app_password=app_password,
         recipient=recipient,
         subject=f"[TRADE-RISK-BASELINE] {trading_date}",
-        body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        body=json.dumps(signed, ensure_ascii=False, indent=2, default=str),
     )
 
 
@@ -362,6 +389,8 @@ def load_latest_lifecycle_states(
     imap_host: str,
     user: str,
     app_password: str,
+    hmac_secret: str,
+    expected_account_id: str,
 ) -> list[dict]:
     client = imaplib.IMAP4_SSL(imap_host, 993)
     client.login(user, app_password)
@@ -388,15 +417,42 @@ def load_latest_lifecycle_states(
                 continue
             if not isinstance(payload, dict):
                 continue
+            if not verify_internal_journal_token(
+                hmac_secret,
+                purpose="lifecycle_state",
+                payload=payload,
+            ):
+                continue
+            if payload.get("environment") != "TINVEST_SANDBOX":
+                continue
+            if (
+                str(payload.get("lifecycle_version") or "")
+                != PROTECTIVE_LIFECYCLE_VERSION
+            ):
+                continue
+            if (
+                str(payload.get("sandbox_account_id") or "")
+                != expected_account_id
+            ):
+                continue
+
             signal_id = str(payload.get("signal_id") or "").strip()
             if not signal_id:
                 continue
+            revision = int(payload.get("state_revision") or 0)
+            if revision <= 0:
+                continue
             numeric_id = int(msg_id)
             previous = latest.get(signal_id)
-            if previous is None or numeric_id > previous[0]:
-                latest[signal_id] = (numeric_id, payload)
+            if previous is None:
+                latest[signal_id] = (revision, numeric_id, payload)
+                continue
+            if revision > previous[0]:
+                latest[signal_id] = (revision, numeric_id, payload)
+            elif revision == previous[0] and numeric_id > previous[1]:
+                latest[signal_id] = (revision, numeric_id, payload)
 
-        return [item[1] for item in latest.values()]
+        return [item[2] for item in latest.values()]
     finally:
         client.logout()
 
@@ -407,14 +463,21 @@ def has_risk_baseline(
     user: str,
     app_password: str,
     trading_date: str,
+    hmac_secret: str,
+    expected_account_name: str,
 ) -> bool:
-    return _imap_has_exact_subject_from(
-        imap_host=imap_host,
-        user=user,
-        app_password=app_password,
-        subject=f"[TRADE-RISK-BASELINE] {trading_date}",
-        allowed_from=user,
-    )
+    try:
+        load_risk_baseline(
+            imap_host=imap_host,
+            user=user,
+            app_password=app_password,
+            trading_date=trading_date,
+            hmac_secret=hmac_secret,
+            expected_account_name=expected_account_name,
+        )
+        return True
+    except RuntimeError:
+        return False
 
 
 def load_risk_baseline(
@@ -423,6 +486,8 @@ def load_risk_baseline(
     user: str,
     app_password: str,
     trading_date: str,
+    hmac_secret: str,
+    expected_account_name: str,
 ) -> dict:
     subject = f"[TRADE-RISK-BASELINE] {trading_date}"
     client = imaplib.IMAP4_SSL(imap_host, 993)
@@ -433,7 +498,7 @@ def load_risk_baseline(
         if status != "OK":
             raise RuntimeError("IMAP risk baseline search failed")
 
-        matches: list[bytes] = []
+        matches: list[dict] = []
         for msg_id in data[0].split():
             status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
             if status != "OK" or not fetched:
@@ -442,18 +507,44 @@ def load_risk_baseline(
             msg = email.message_from_bytes(raw)
             sender = parseaddr(msg.get("From", ""))[1].lower()
             actual_subject = _decode_header(msg.get("Subject")).strip()
-            if sender == user.lower() and actual_subject == subject:
-                matches.append(raw)
+            if sender != user.lower() or actual_subject != subject:
+                continue
+            try:
+                payload = json.loads(
+                    extract_json_object(_extract_text(msg))
+                )
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if not verify_internal_journal_token(
+                hmac_secret,
+                purpose="risk_baseline",
+                payload=payload,
+            ):
+                continue
+            if payload.get("environment") != "TINVEST_SANDBOX":
+                continue
+            if str(payload.get("baseline_version") or "") != "2":
+                continue
+            if (
+                str(payload.get("trading_date_moscow") or "")
+                != trading_date
+            ):
+                continue
+            if (
+                str(payload.get("sandbox_account_name") or "")
+                != expected_account_name
+            ):
+                continue
+            matches.append(payload)
 
         if len(matches) != 1:
             raise RuntimeError(
-                f"Expected exactly one risk baseline for {trading_date}, "
-                f"found {len(matches)}"
+                f"Expected exactly one signed risk baseline for "
+                f"{trading_date}, found {len(matches)}"
             )
-        payload = json.loads(extract_json_object(_extract_text(email.message_from_bytes(matches[0]))))
-        if not isinstance(payload, dict):
-            raise RuntimeError("Risk baseline payload must be an object")
-        return payload
+        return matches[0]
     finally:
         client.logout()
 
@@ -525,14 +616,47 @@ def has_execution_receipt(
     app_password: str,
     allowed_from: str,
     signal_id: str,
+    hmac_secret: str,
 ) -> bool:
-    return _imap_has_exact_subject_from(
-        imap_host=imap_host,
-        user=user,
-        app_password=app_password,
-        subject=f"[TRADE-EXEC] {signal_id}",
-        allowed_from=allowed_from,
-    )
+    subject = f"[TRADE-EXEC] {signal_id}"
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    client.select("INBOX", readonly=True)
+    try:
+        status, data = client.search(None, "SUBJECT", f'"{subject}"')
+        if status != "OK":
+            raise RuntimeError("IMAP execution receipt search failed")
+        for msg_id in data[0].split():
+            status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not fetched:
+                continue
+            msg = email.message_from_bytes(fetched[0][1])
+            sender = parseaddr(msg.get("From", ""))[1].lower()
+            actual_subject = _decode_header(msg.get("Subject")).strip()
+            if (
+                sender != allowed_from.lower()
+                or actual_subject != subject
+            ):
+                continue
+            try:
+                payload = json.loads(
+                    extract_json_object(_extract_text(msg))
+                )
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("signal_id") or "") != signal_id:
+                continue
+            if verify_internal_journal_token(
+                hmac_secret,
+                purpose="execution_receipt",
+                payload=payload,
+            ):
+                return True
+        return False
+    finally:
+        client.logout()
 
 
 def iter_unseen_command_messages(
