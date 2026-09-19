@@ -1,6 +1,7 @@
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from tradebot.config import Config
@@ -13,11 +14,34 @@ from tradebot.mailbox import (
 )
 from tradebot.protocol import Signal, parse_iso_utc
 from tradebot.risk import (
+    DAILY_STOP,
+    MONTHLY_STOP,
+    WEEKLY_STOP,
     compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
+    compute_period_pnl_rub,
+    latest_strategy_close_time,
 )
 from tradebot.scanner import enrich_candidate, scan_candidates
 from tradebot.tinvest import TInvestSandboxClient
+
+
+def money_value(value) -> Decimal:
+    if not isinstance(value, dict):
+        raise RuntimeError("Portfolio equity is unavailable")
+    return (
+        Decimal(str(value.get("units", "0")))
+        + Decimal(str(value.get("nano", 0)))
+        / Decimal("1000000000")
+    )
+
+
+def entry_window_open(now_utc: datetime) -> bool:
+    moscow = now_utc.astimezone(ZoneInfo("Europe/Moscow"))
+    if moscow.weekday() >= 5:
+        return False
+    current = moscow.time().replace(tzinfo=None)
+    return time(10, 5) <= current < time(17, 45)
 
 
 def execution_snapshot_ready(
@@ -34,6 +58,14 @@ def execution_snapshot_ready(
     if hard_risk_context.get("error") is not None:
         return False
     if hard_risk_context.get("daily_pnl_rub") is None:
+        return False
+    if hard_risk_context.get("weekly_pnl_rub") is None:
+        return False
+    if hard_risk_context.get("monthly_pnl_rub") is None:
+        return False
+    if hard_risk_context.get("risk_gate_open") is not True:
+        return False
+    if hard_risk_context.get("entry_window_open") is not True:
         return False
     losses = hard_risk_context.get("consecutive_losses")
     if losses is None or int(losses) >= 3:
@@ -137,7 +169,14 @@ def main():
         "sandbox_ready": sandbox_ready,
         "trading_date_moscow": trading_date,
         "daily_pnl_rub": None,
+        "weekly_pnl_rub": None,
+        "monthly_pnl_rub": None,
+        "high_water_mark_rub": None,
+        "drawdown_from_high_water": None,
         "consecutive_losses": None,
+        "last_strategy_close_at": None,
+        "entry_window_open": entry_window_open(now_utc),
+        "risk_gate_open": False,
         "baseline_generated_at_utc": None,
         "error": None,
     }
@@ -159,6 +198,41 @@ def main():
             from_time=baseline_time,
             to_time=now_utc,
         )
+        week_start_time = parse_iso_utc(
+            str(baseline.get("week_start_generated_at_utc") or "")
+        )
+        month_start_time = parse_iso_utc(
+            str(baseline.get("month_start_generated_at_utc") or "")
+        )
+        week_operations = client.get_operations_by_cursor(
+            from_time=week_start_time,
+            to_time=now_utc,
+        )
+        month_operations = client.get_operations_by_cursor(
+            from_time=month_start_time,
+            to_time=now_utc,
+        )
+        daily_pnl = compute_daily_pnl_rub(
+            current_portfolio=current_portfolio,
+            baseline_payload=baseline,
+            operations_since_baseline=operations,
+        )
+        weekly_pnl = compute_period_pnl_rub(
+            current_portfolio=current_portfolio,
+            start_equity_rub=Decimal(
+                str(baseline.get("week_start_equity_rub"))
+            ),
+            operations_since_start=week_operations,
+            period_name="week",
+        )
+        monthly_pnl = compute_period_pnl_rub(
+            current_portfolio=current_portfolio,
+            start_equity_rub=Decimal(
+                str(baseline.get("month_start_equity_rub"))
+            ),
+            operations_since_start=month_operations,
+            period_name="month",
+        )
         lifecycle_states = load_latest_lifecycle_states(
             imap_host=cfg.imap_host,
             user=cfg.mail_user,
@@ -166,22 +240,59 @@ def main():
             hmac_secret=cfg.hmac_secret,
             expected_account_id=client.account_id,
         )
+        consecutive_losses = compute_consecutive_losses_from_lifecycle(
+            lifecycle_states,
+            since_utc=str(baseline["generated_at_utc"]),
+        )
+        last_close = latest_strategy_close_time(
+            lifecycle_states,
+            since_utc=str(baseline["generated_at_utc"]),
+        )
+        capital = money_value(
+            current_portfolio.get("totalAmountPortfolio")
+            or current_portfolio.get("total_amount_portfolio")
+        )
+        week_start = Decimal(str(baseline.get("week_start_equity_rub")))
+        month_start = Decimal(str(baseline.get("month_start_equity_rub")))
+        high_water = Decimal(str(baseline.get("high_water_mark_rub")))
+        drawdown = (
+            (max(high_water, capital) - capital)
+            / max(high_water, capital)
+        )
+        cooldown_open = True
+        if consecutive_losses >= 3:
+            cooldown_open = False
+        elif consecutive_losses >= 2:
+            if last_close is None:
+                cooldown_open = False
+            else:
+                cooldown_open = (
+                    now_utc >= last_close + timedelta(hours=2)
+                )
+
+        risk_gate_open = (
+            daily_pnl > -(capital * DAILY_STOP)
+            and weekly_pnl > -(week_start * WEEKLY_STOP)
+            and monthly_pnl > -(month_start * MONTHLY_STOP)
+            and cooldown_open
+        )
+
         hard_risk_context.update(
             {
-                "daily_pnl_rub": str(
-                    compute_daily_pnl_rub(
-                        current_portfolio=current_portfolio,
-                        baseline_payload=baseline,
-                        operations_since_baseline=operations,
-                    )
+                "daily_pnl_rub": str(daily_pnl),
+                "weekly_pnl_rub": str(weekly_pnl),
+                "monthly_pnl_rub": str(monthly_pnl),
+                "high_water_mark_rub": str(high_water),
+                "drawdown_from_high_water": str(drawdown),
+                "consecutive_losses": consecutive_losses,
+                "last_strategy_close_at": (
+                    last_close.isoformat() if last_close else None
                 ),
-                "consecutive_losses": (
-                    compute_consecutive_losses_from_lifecycle(
-                        lifecycle_states,
-                        since_utc=str(baseline["generated_at_utc"]),
-                    )
-                ),
+                "risk_gate_open": risk_gate_open,
                 "baseline_generated_at_utc": baseline.get("generated_at_utc"),
+                "baseline_version": baseline.get("baseline_version"),
+                "week_id": baseline.get("week_id"),
+                "month_id": baseline.get("month_id"),
             }
         )
     except Exception as exc:
