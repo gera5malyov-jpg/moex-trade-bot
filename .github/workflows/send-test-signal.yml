@@ -3,6 +3,9 @@ name: Send test signal
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   send:
     runs-on: ubuntu-latest

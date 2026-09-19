@@ -3,6 +3,9 @@ name: Bootstrap T-Invest Sandbox
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   bootstrap:
     runs-on: ubuntu-latest

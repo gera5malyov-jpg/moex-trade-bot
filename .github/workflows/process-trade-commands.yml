@@ -3,6 +3,9 @@ name: Process trade commands
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   process:
     runs-on: ubuntu-latest
