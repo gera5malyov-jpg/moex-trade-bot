@@ -71,6 +71,63 @@ def _positive_position_count(portfolio: dict) -> int:
 
 
 
+def compute_consecutive_losses_from_lifecycle(
+    lifecycle_states: list[dict[str, Any]],
+    *,
+    since_utc: str,
+) -> int:
+    since = parse_iso_utc(since_utc)
+    closed_statuses = {
+        "CLOSED_STOP_LOSS",
+        "CLOSED_TAKE_PROFIT",
+        "CLOSED_TIME_STOP",
+        "CLOSED_FORCE_EXIT",
+        "CLOSED_POSITION_GONE",
+    }
+    outcomes: list[tuple[Any, Decimal]] = []
+
+    for state in lifecycle_states:
+        if str(state.get("lifecycle_kind") or "") != "STRATEGY":
+            continue
+        if str(state.get("status") or "") not in closed_statuses:
+            continue
+
+        updated_raw = str(state.get("updated_at") or "")
+        if not updated_raw:
+            raise RuntimeError(
+                "Hard risk: closed lifecycle state has no updated_at"
+            )
+        updated_at = parse_iso_utc(updated_raw)
+        if updated_at < since:
+            continue
+
+        pnl_raw = state.get("realized_pnl_rub")
+        if pnl_raw in (None, ""):
+            raise RuntimeError(
+                "Hard risk: realized strategy P&L unavailable for loss streak"
+            )
+        try:
+            pnl = Decimal(str(pnl_raw))
+        except Exception as exc:
+            raise RuntimeError(
+                "Hard risk: invalid realized strategy P&L"
+            ) from exc
+        if not pnl.is_finite():
+            raise RuntimeError(
+                "Hard risk: non-finite realized strategy P&L"
+            )
+        outcomes.append((updated_at, pnl))
+
+    outcomes.sort(key=lambda item: item[0])
+    count = 0
+    for _, pnl in reversed(outcomes):
+        if pnl < 0:
+            count += 1
+            continue
+        break
+    return count
+
+
 def compute_consecutive_losses(
     operations_since_baseline: dict,
 ) -> int:
