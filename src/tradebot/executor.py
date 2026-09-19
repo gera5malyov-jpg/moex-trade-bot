@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .mailbox import (
     has_sandbox_ready_marker,
+    load_latest_lifecycle_states,
     load_risk_baseline,
     send_lifecycle_state_email,
 )
@@ -19,7 +20,7 @@ from .protocol import (
 )
 from .lifecycle import open_protected_long
 from .risk import (
-    compute_consecutive_losses,
+    compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
     validate_buy_hard_risk,
 )
@@ -320,7 +321,17 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             baseline_payload=baseline,
             operations_since_baseline=operations,
         )
-        consecutive_losses = compute_consecutive_losses(operations)
+        lifecycle_states = load_latest_lifecycle_states(
+            imap_host=config.imap_host,
+            user=config.mail_user,
+            app_password=config.mail_app_password,
+            hmac_secret=config.hmac_secret,
+            expected_account_id=client.account_id,
+        )
+        consecutive_losses = compute_consecutive_losses_from_lifecycle(
+            lifecycle_states,
+            since_utc=str(baseline["generated_at_utc"]),
+        )
 
         hard_risk = validate_buy_hard_risk(
             command=command,
