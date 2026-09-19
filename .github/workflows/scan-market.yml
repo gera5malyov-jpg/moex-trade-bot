@@ -1,11 +1,10 @@
 name: Scan market candidates
-# one-time automatic Outlook bridge scanner verification
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/scan-market.yml"
+  schedule:
+    # Every 15 minutes, weekdays, 07:00–23:45 Moscow (UTC+3).
+    - cron: "*/15 4-20 * * 1-5"
 
 permissions:
   contents: read
