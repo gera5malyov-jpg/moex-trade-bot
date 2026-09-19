@@ -8,7 +8,75 @@ from tradebot.mailbox import (
     mark_seen,
     send_execution_receipt,
 )
-from tradebot.protocol import TradeCommand, utc_now
+from tradebot.protocol import TradeCommand, utc_now, verify_auth_token
+
+
+def _valid_command_auth(command: TradeCommand, cfg: Config) -> bool:
+    return verify_auth_token(
+        cfg.hmac_secret,
+        signal_id=command.signal_id,
+        created_at=command.signal_created_at,
+        ticker=command.ticker,
+        class_code=command.class_code,
+        instrument_uid=command.instrument_uid,
+        instrument_type=command.instrument_type,
+        execution_capability=command.execution_capability,
+        token=command.auth_token,
+    )
+
+
+def _terminal_rejection(exc: Exception) -> bool:
+    if isinstance(exc, ValueError):
+        return True
+    message = str(exc)
+    terminal_prefixes = (
+        "Hard risk:",
+        "BUY locked:",
+        "Execution refused:",
+        "Automatic execution is not yet supported",
+        "Signal is analysis-only:",
+        "TRADING_ENABLED is false",
+        "BUY refused:",
+        "SELL refused:",
+        "Resolved ",
+        "Instrument resolution",
+    )
+    return message.startswith(terminal_prefixes)
+
+
+def _send_rejection_receipt(
+    *,
+    cfg: Config,
+    command: TradeCommand,
+    exc: Exception,
+) -> None:
+    receipt = {
+        "journal_version": "2",
+        "processed_at": utc_now().isoformat(),
+        "signal_id": command.signal_id,
+        "signal_created_at": command.signal_created_at,
+        "action": command.action,
+        "ticker": command.ticker,
+        "class_code": command.class_code,
+        "instrument_id": command.instrument_id,
+        "instrument_uid": command.instrument_uid,
+        "instrument_type": command.instrument_type,
+        "execution_capability": command.execution_capability,
+        "result": {
+            "status": "rejected",
+            "error_type": type(exc).__name__,
+            "reason": str(exc)[:500],
+        },
+    }
+    send_execution_receipt(
+        smtp_host=cfg.smtp_host,
+        user=cfg.mail_user,
+        app_password=cfg.mail_app_password,
+        recipient=cfg.mail_to,
+        signal_id=command.signal_id,
+        payload=receipt,
+        hmac_secret=cfg.hmac_secret,
+    )
 
 
 def main():
@@ -22,6 +90,7 @@ def main():
         app_password=cfg.mail_app_password,
         allowed_from=cfg.command_allowed_from,
     ):
+        command = None
         try:
             command = TradeCommand.from_json(raw_json)
             expected_subject = f"[TRADE-CMD] {command.signal_id}"
@@ -53,7 +122,7 @@ def main():
 
             result = execute_command(command, cfg)
             receipt = {
-                "journal_version": "1",
+                "journal_version": "2",
                 "processed_at": utc_now().isoformat(),
                 "signal_id": command.signal_id,
                 "signal_created_at": command.signal_created_at,
@@ -111,13 +180,38 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
             processed += 1
         except Exception as exc:
-            # Rejected/failed commands remain UNSEEN so the next run can retry
-            # transient failures. Deterministic invalid commands will keep
-            # failing and are visible in Actions logs for diagnosis.
             print(
                 f"Command rejected: {subject}: "
                 f"{type(exc).__name__}: {exc}"
             )
+
+            # Poison/invalid mail must not be retried forever. A syntactically
+            # invalid message is simply quarantined (marked seen). A validly
+            # authenticated command with a deterministic rejection gets a
+            # signed rejection receipt. Network/API/SMTP failures remain
+            # unseen so the next scheduled run can retry safely.
+            if command is None:
+                mark_seen(
+                    imap_host=cfg.imap_host,
+                    user=cfg.mail_user,
+                    app_password=cfg.mail_app_password,
+                    message_id=msg_id,
+                )
+                continue
+
+            if _terminal_rejection(exc):
+                if _valid_command_auth(command, cfg):
+                    _send_rejection_receipt(
+                        cfg=cfg,
+                        command=command,
+                        exc=exc,
+                    )
+                mark_seen(
+                    imap_host=cfg.imap_host,
+                    user=cfg.mail_user,
+                    app_password=cfg.mail_app_password,
+                    message_id=msg_id,
+                )
 
     print(
         f"Processed commands: {processed}; "
