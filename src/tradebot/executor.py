@@ -323,6 +323,11 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             portfolio=prepared["portfolio"],
             preflight_order_price=prepared["preflight_order_price"],
             instrument_lot=lot,
+            min_price_increment=_quotation_decimal(
+                prepared["instrument"].get("minPriceIncrement")
+                or prepared["instrument"].get("min_price_increment"),
+                "min price increment",
+            ),
             daily_pnl_rub=daily_pnl,
             consecutive_losses=consecutive_losses,
         )
@@ -376,6 +381,9 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
                 "risk_budget_rub": str(hard_risk.risk_budget_rub),
                 "position_cap_rub": str(hard_risk.position_cap_rub),
                 "open_positions": hard_risk.open_positions,
+                "net_risk_rub": str(hard_risk.net_risk_rub),
+                "net_reward_rub": str(hard_risk.net_reward_rub),
+                "risk_reward_net": str(hard_risk.risk_reward_net),
             }
             if hard_risk is not None
             else None
