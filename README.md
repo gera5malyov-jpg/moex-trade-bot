@@ -8,7 +8,7 @@
 
 - production endpoint в коде отсутствует;
 - реальные деньги не используются;
-- исполняемые BUY/SELL пока разрешены только для `share` и `etf`;
+- автоматический вход разрешён только для LONG BUY по `share` и `etf`; standalone SELL от Work заблокирован, выходами управляет protective lifecycle;
 - для всех брокерских заявок `confirmMarginTrade=false`;
 - BUY требует protocol v2, корректный HMAC, `execution_capability=true`, hard-risk checks и живой маркер `[TRADE-SANDBOX-READY]`;
 - readiness-маркер создаётся только после фактического Sandbox smoke-теста entry → STOP/TAKE → TIME_STOP/FORCE_EXIT → нулевая позиция;
@@ -39,8 +39,8 @@ Work reviewer читает актуальные:
 ## Расписание
 
 - risk baseline: по будням в 06:00 МСК;
-- scanner: по будням каждые 15 минут, 07:00–23:45 МСК;
-- command processor + lifecycle monitor: каждые 5 минут, 06:00–23:55 МСК;
+- scanner: по будням каждые 15 минут, 10:00–17:45 МСК; исполняемое окно жёстко 10:05–17:45 МСК;
+- command processor + lifecycle monitor: каждые 5 минут, 09:45–18:45 МСК;
 - raw daily snapshot: 23:52 МСК;
 - ChatGPT daily report: 23:59 МСК.
 
@@ -53,16 +53,19 @@ Scanner:
 - для биржевых классов отбирает только `REAL_EXCHANGE_MOEX`;
 - DFA остаётся отдельным analysis-only специальным классом;
 - использует bulk last/close prices;
-- обогащает кандидата стаканом, торговым статусом, 5m/15m свечами, EMA9/21, RSI14, ATR14, VWAP, relative volume;
+- обогащает кандидата стаканом, торговым статусом, 1m/5m/15m/1h/1D свечами, EMA9/21, RSI14, ATR14, VWAP, relative volume, realized volatility и оценкой оборота;
 - передаёт доступный RUB cash и состояние портфеля;
-- передаёт independently computed daily P&L и consecutive losses, когда доступен дневной baseline;
+- передаёт independently computed daily/weekly/monthly P&L, high-water drawdown, consecutive losses и статус торгового окна из подписанного baseline v3;
 - имеет cooldown по instrument UID, чтобы не слать один и тот же инструмент на каждом запуске.
 
 `execution_capability=true` scanner может выставить только для share/ETF и только если:
-1. существует `[TRADE-SANDBOX-READY]`;
-2. дневной baseline доступен;
-3. daily P&L рассчитан;
-4. consecutive losses рассчитаны.
+1. существует криптографически валидный `[TRADE-SANDBOX-READY]` для текущего Sandbox-счёта;
+2. доступен подписанный baseline v3;
+3. рассчитаны daily/weekly/monthly P&L и high-water context;
+4. consecutive losses рассчитаны и loss-cooldown не активен;
+5. сейчас разрешённое торговое окно;
+6. инструмент доступен через API, ликвиден и находится в NORMAL_TRADING;
+7. полный 1m–1D technical snapshot доступен.
 
 Во всех остальных случаях сигнал analysis-only.
 
@@ -74,12 +77,18 @@ Scanner:
 - стоимость позиции ≤ 10% капитала;
 - максимум 2 открытые позиции;
 - дневной stop = 0,75% капитала;
-- после 3 последовательных убыточных SELL новые BUY блокируются;
+- недельный stop = 2% капитала начала недели;
+- месячный stop = 4% капитала начала месяца;
+- при просадке более 3% от signed high-water mark risk budget уменьшается вдвое;
+- после 2 последовательных убыточных strategy lifecycle — пауза минимум 2 часа;
+- после 3 последовательных убытков новые BUY блокируются до следующего торгового дня;
 - повторный вход в тот же instrument UID блокируется;
 - для акций блокируется новый BUY в уже занятом секторе;
 - проверяются собственные деньги/позиция через Sandbox MaxLots;
 - перед BUY используется Sandbox OrderPrice;
-- любое пополнение/вывод после дневного baseline блокирует BUY.
+- любое пополнение/вывод после релевантного daily/weekly/monthly baseline блокирует BUY;
+- live order book перед BUY должен быть не старше 60 секунд;
+- код независимо проверяет торговое окно 10:05–17:45 МСК.
 
 T-Invest Sandbox не всегда рассчитывает portfolio daily yield, поэтому дневной P&L считается как:
 
@@ -104,13 +113,19 @@ current portfolio equity - start-of-session baseline equity
 
 Broker-side STOP/TAKE остаются активны между 5-минутными monitor runs.
 
-## Daily risk baseline
+## Risk baseline v3
 
-По будням в 06:00 МСК создаётся:
+По будням в 06:00 МСК создаётся подписанный:
 
 `[TRADE-RISK-BASELINE] YYYY-MM-DD`
 
-Baseline содержит фактический Sandbox portfolio equity. Hard-risk использует его вместе с операциями брокера.
+Baseline v3 содержит:
+- фактический Sandbox portfolio equity;
+- week-start equity/timestamp;
+- month-start equity/timestamp;
+- signed high-water mark.
+
+Hard-risk независимо считает daily/weekly/monthly P&L и fail-closed блокирует BUY при отсутствии или повреждении baseline.
 
 ## Sandbox readiness
 
@@ -120,7 +135,7 @@ Baseline содержит фактический Sandbox portfolio equity. Hard-
 
 `[TRADE-SANDBOX-READY]`
 
-One-time workflow `.github/workflows/sandbox-lifecycle-smoke.yml` настроен на 21.09.2026 утром по Москве. Он:
+One-time workflow `.github/workflows/sandbox-lifecycle-smoke.yml` настроен на 21.09.2026 в 10:10, 11:10 и 12:10 МСК, только в основной сессии. Он:
 
 - отказывается запускаться при существующей позиции;
 - использует максимум 1 лот SBER на MOEX;
@@ -159,41 +174,52 @@ Reviewer отдельно оценивает:
 
 ## Проверки
 
-Подтверждено:
-- protocol v2 tests;
-- hard-risk tests;
-- baseline daily P&L tests;
-- consecutive-loss tests;
-- MOEX-only scanner tests;
-- protective lifecycle fake-broker tests;
-- compileall для всех `src/` и `scripts/`;
-- daily Sandbox snapshot → Gmail;
-- Work reviewer → `[TRADE-CMD]`;
-- command processor → `[TRADE-EXEC]`;
-- Outlook вручную пересланный signal → Gmail event → Work;
-- live risk baseline → Gmail;
-- live lifecycle monitor на пустом состоянии.
+Подтверждено unit/CI:
+- protocol v2 и HMAC identity;
+- signed readiness и signed internal journals;
+- hard-risk: 0,25%, 10%, 2 позиции, net R/R >= 2;
+- daily/weekly/monthly loss limits;
+- high-water drawdown multiplier;
+- 2-loss cooldown;
+- hard trading window;
+- MOEX-only scanner;
+- STOP/TAKE payload semantics;
+- protective lifecycle, sibling cancellation и verified force-exit;
+- realized lifecycle P&L journal;
+- compileall для всех `src/` и `scripts/`.
 
-## Текущий внешний блокер
+Подтверждено end-to-end:
+- GitHub → Outlook;
+- автоматическое Outlook rule → Gmail plus-alias;
+- Gmail → ChatGPT Work;
+- Work → `[TRADE-CMD]`;
+- GitHub command processor → signed `[TRADE-EXEC]`.
 
-Свежий контрольный сигнал `118c4e24-6b85-4a1b-933c-22a5556e6839` успешно дошёл GitHub → Outlook, но автоматическая пересылка Outlook → Gmail в контрольном прогоне не появилась.
+Outlook bridge сейчас работает автоматически; ручная пересылка не требуется.
 
-До исправления Outlook rule:
-- scanner безопасно может работать;
-- сигналы будут доходить до Outlook;
-- Work не получит их автоматически;
-- торговая команда не создастся;
-- сделки не выполнятся.
+## Калибровка и benchmark
 
-Это fail-closed состояние.
+Reviewer журналирует для каждого решения, включая SKIP:
+- MARKET_REGIME;
+- PROBABILITY_SUCCESS_PERCENT, если калиброванная P доступна;
+- EXPECTED_VALUE_RUB;
+- COUNTER_ARGUMENT;
+- BENCHMARK_CHECK;
+- DATA_COMPLETENESS.
 
-## Что остаётся перед полностью автоматическими Sandbox-сделками
+Модель не имеет права придумывать P. Пока статистики недостаточно, Sandbox работает в CALIBRATION_MODE: P/EV могут быть недоступны, а production всё равно запрещён. Benchmark FAIL или DATA_COMPLETENESS=PARTIAL блокирует BUY.
 
-1. Подтвердить/исправить Outlook rule, автоматически пересылающее `[TRADE-SIGNAL]` на Gmail.
-2. Дождаться успешного one-time live Sandbox lifecycle smoke 21.09.2026; readiness создаётся автоматически только при полном успехе.
-3. После этого share/ETF scanner сможет выдавать signed `execution_capability=true`, а Work и hard-risk сохранят право сделать SKIP.
+Автоматический counterfactual outcome для каждого NO_TRADE пока не реализован; это отдельный аналитический модуль и не является условием безопасности Sandbox executor.
 
-Исполнение облигаций, валюты, металлов, фьючерсов, опционов и DFA остаётся заблокированным до отдельной валидации price semantics и защитного lifecycle для каждого класса.
+## Что остаётся перед автоматическими Sandbox BUY
+
+1. В 06:00 МСК 21.09.2026 должен создаться новый signed baseline v3.
+2. One-time live Sandbox smoke должен подтвердить реальный entry → активные STOP/TAKE → безопасный TIME_STOP/FORCE_EXIT → нулевую позицию.
+3. Только после этого появится signed `[TRADE-SANDBOX-READY]`.
+
+Даже после readiness Work и hard-risk могут и должны вернуть SKIP.
+
+Исполнение облигаций, валюты, металлов, фьючерсов, опционов и DFA остаётся заблокированным до отдельной валидации price semantics и lifecycle для каждого класса.
 
 ## Secrets
 
@@ -206,4 +232,4 @@ GitHub Secrets:
 
 ## Production
 
-Production-контур отсутствует. Любое будущее подключение реальных денег — отдельный проектный этап с отдельной валидацией и явным решением пользователя.
+Production-контур отсутствует. Перед любыми реальными деньгами требуется отдельный проектный этап, ручное решение владельца и минимум 100 проверяемых Sandbox/исторических сигналов. Sandbox readiness не является разрешением production.
