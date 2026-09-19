@@ -18,6 +18,17 @@ def _tbank_ca_bundle() -> str:
     return str(path)
 
 
+def _quotation_to_decimal(value: Any) -> Decimal:
+    if not isinstance(value, dict):
+        raise RuntimeError("Quotation value is unavailable")
+    result = (
+        Decimal(str(value.get("units", "0")))
+        + Decimal(str(value.get("nano", 0)))
+        / Decimal("1000000000")
+    )
+    return result
+
+
 def _as_int(value: Any) -> int:
     if value is None or value == "":
         return 0
@@ -413,7 +424,11 @@ class TInvestSandboxClient:
             "confirmMarginTrade": False,
         }
         if stop_order_type == "STOP_ORDER_TYPE_TAKE_PROFIT":
-            payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_MARKET"
+            # Profit-taking remains a LIMIT exit. Protective STOP_LOSS is the
+            # only deliberate market-style exception because capital
+            # protection has priority over price improvement.
+            payload["price"] = quotation_from_decimal(stop_price)
+            payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_LIMIT"
             payload["takeProfitType"] = "TAKE_PROFIT_TYPE_REGULAR"
 
         result = self._post(
