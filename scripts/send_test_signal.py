@@ -22,7 +22,8 @@ def main():
         signal_id=signal.signal_id,
         json_body=signal.to_json(),
     )
-    print(signal.to_json())
+    # Do not print auth_token into public GitHub Actions logs.
+    print(f"Test signal sent: {signal.signal_id}")
 
 
 if __name__ == "__main__":
