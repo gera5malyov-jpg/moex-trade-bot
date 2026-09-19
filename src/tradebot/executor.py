@@ -4,7 +4,11 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from .config import Config
-from .mailbox import load_risk_baseline, send_lifecycle_state_email
+from .mailbox import (
+    has_sandbox_ready_marker,
+    load_risk_baseline,
+    send_lifecycle_state_email,
+)
 from .protocol import (
     PROTOCOL_VERSION,
     TradeCommand,
@@ -21,7 +25,7 @@ from .tinvest import TInvestSandboxClient
 # flips a repository variable. This will be changed only after the sandbox
 # protective-order lifecycle (entry fill -> STOP/TAKE -> sibling cancellation ->
 # TIME_STOP) is implemented and tested end-to-end.
-PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = False
+PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = True
 
 # Until price semantics and protective lifecycle are independently validated,
 # automatic execution is restricted to ordinary cash-market shares and ETFs.
@@ -87,6 +91,16 @@ def validate_command(command: TradeCommand, config: Config) -> None:
         raise RuntimeError(
             "BUY locked: protective STOP/TAKE/TIME_STOP lifecycle "
             "is not implemented yet"
+        )
+
+    if command.action == "BUY" and not has_sandbox_ready_marker(
+        imap_host=config.imap_host,
+        user=config.mail_user,
+        app_password=config.mail_app_password,
+    ):
+        raise RuntimeError(
+            "BUY locked: live Sandbox protective lifecycle smoke test "
+            "has not produced TRADE-SANDBOX-READY"
         )
 
 
