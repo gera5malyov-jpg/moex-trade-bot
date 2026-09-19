@@ -37,6 +37,124 @@ def _as_int(data: dict[str, Any], *names: str) -> int:
     return int(value)
 
 
+def _money_decimal_or_none(value: Any) -> Decimal | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        result = (
+            Decimal(str(value.get("units", "0")))
+            + Decimal(str(value.get("nano", 0)))
+            / Decimal("1000000000")
+        )
+    except Exception:
+        return None
+    return result if result.is_finite() else None
+
+
+def _execution_price(payload: dict[str, Any]) -> Decimal | None:
+    return _money_decimal_or_none(
+        _pick(
+            payload,
+            "executedOrderPrice",
+            "executed_order_price",
+        )
+    )
+
+
+def _execution_commission(payload: dict[str, Any]) -> Decimal | None:
+    value = _pick(
+        payload,
+        "executedCommission",
+        "executed_commission",
+    )
+    result = _money_decimal_or_none(value)
+    return abs(result) if result is not None else None
+
+
+def _append_exit_component(
+    state: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    source: str,
+    order_id: str,
+) -> dict[str, Any]:
+    lots = _as_int(payload, "lotsExecuted", "lots_executed")
+    price = _execution_price(payload)
+    commission = _execution_commission(payload)
+    if lots <= 0 or price is None or commission is None:
+        return state
+
+    components = [
+        dict(item)
+        for item in (state.get("exit_components") or [])
+        if isinstance(item, dict)
+    ]
+    if any(str(item.get("order_id") or "") == order_id for item in components):
+        return state
+
+    out = dict(state)
+    components.append(
+        {
+            "source": source,
+            "order_id": order_id,
+            "lots": lots,
+            "executed_price": str(price),
+            "commission_rub": str(commission),
+        }
+    )
+    out["exit_components"] = components
+    return out
+
+
+def _finalize_realized_pnl(state: dict[str, Any]) -> dict[str, Any]:
+    out = dict(state)
+    if str(out.get("lifecycle_kind") or "") != "STRATEGY":
+        return out
+
+    try:
+        entry_price = Decimal(str(out["entry_executed_price"]))
+        entry_commission = Decimal(str(out["entry_commission_rub"]))
+        filled_lots = int(out["filled_lots"])
+        lot_size = int(out["lot_size"])
+    except Exception:
+        out["realized_pnl_error"] = "entry execution data unavailable"
+        return out
+
+    components = [
+        item
+        for item in (out.get("exit_components") or [])
+        if isinstance(item, dict)
+    ]
+    exited_lots = sum(int(item.get("lots") or 0) for item in components)
+    if exited_lots != filled_lots:
+        out["realized_pnl_error"] = (
+            f"exit lots mismatch: expected {filled_lots}, got {exited_lots}"
+        )
+        return out
+
+    exit_proceeds = Decimal("0")
+    exit_commission = Decimal("0")
+    for item in components:
+        try:
+            lots = Decimal(int(item["lots"]))
+            price = Decimal(str(item["executed_price"]))
+            commission = Decimal(str(item["commission_rub"]))
+        except Exception:
+            out["realized_pnl_error"] = "invalid exit execution component"
+            return out
+        exit_proceeds += price * lots * Decimal(lot_size)
+        exit_commission += commission
+
+    entry_cost = (
+        entry_price * Decimal(filled_lots * lot_size)
+        + entry_commission
+    )
+    realized = exit_proceeds - exit_commission - entry_cost
+    out["realized_pnl_rub"] = str(realized)
+    out["realized_pnl_error"] = None
+    return out
+
+
 def _status(data: dict[str, Any]) -> str:
     return str(
         _pick(
@@ -265,12 +383,18 @@ def _force_exit_remaining(
 
     post = result.get("post_order") or {}
     lots_executed = _as_int(post, "lotsExecuted", "lots_executed")
+    state_with_exit = _append_exit_component(
+        state,
+        payload=post,
+        source="FORCE_EXIT",
+        order_id=str(_pick(post, "orderId", "order_id") or result.get("request_order_id") or ""),
+    )
     after = client.get_position_lots(
         instrument_uid=str(state["instrument_uid"]),
         lot_size=int(state["lot_size"]),
     )
 
-    out = dict(state)
+    out = dict(state_with_exit)
     out.update(
         {
             "updated_at": utc_now().isoformat(),
@@ -284,6 +408,7 @@ def _force_exit_remaining(
     )
     if after <= 0:
         out["status"] = closed_status
+        out = _finalize_realized_pnl(out)
     else:
         out["status"] = "FORCE_EXIT_PENDING"
         out["pending_closed_status"] = closed_status
@@ -346,6 +471,22 @@ def open_protected_long(
         "entry_status": entry_status,
         "requested_lots": command.quantity_lots,
         "filled_lots": lots_executed,
+        "lifecycle_kind": (
+            "SMOKE_TEST"
+            if command.reviewer_note.startswith("SANDBOX_LIFECYCLE_SMOKE_TEST")
+            else "STRATEGY"
+        ),
+        "entry_executed_price": (
+            str(_execution_price(post))
+            if _execution_price(post) is not None
+            else None
+        ),
+        "entry_commission_rub": (
+            str(_execution_commission(post))
+            if _execution_commission(post) is not None
+            else None
+        ),
+        "exit_components": [],
         "created_at": utc_now().isoformat(),
         "updated_at": utc_now().isoformat(),
         "status": "ENTRY_NOT_FILLED",
@@ -612,9 +753,15 @@ def monitor_lifecycle_state(
             "EXECUTION_REPORT_STATUS_REJECTED",
             "EXECUTION_REPORT_STATUS_CANCELLED",
         }:
+            state_with_child = _append_exit_component(
+                state,
+                payload=child,
+                source=str(state.get("triggered_by") or "PROTECTIVE_CHILD"),
+                order_id=child_id,
+            )
             return _cancel_verified_or_wait(
                 client=client,
-                state=state,
+                state=state_with_child,
                 reason=f"PROTECTIVE_CHILD_{child_status}",
                 closed_status=str(
                     state.get("triggered_closed_status")
@@ -756,9 +903,15 @@ def monitor_lifecycle_state(
         "EXECUTION_REPORT_STATUS_REJECTED",
         "EXECUTION_REPORT_STATUS_CANCELLED",
     }:
+        state_with_child = _append_exit_component(
+            state,
+            payload=child,
+            source=trigger_name,
+            order_id=child_id,
+        )
         return _cancel_verified_or_wait(
             client=client,
-            state=state,
+            state=state_with_child,
             reason=f"{trigger_name}_{child_status}",
             closed_status=closed_status,
         )
