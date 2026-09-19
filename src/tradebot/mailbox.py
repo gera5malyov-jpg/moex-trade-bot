@@ -550,6 +550,87 @@ def load_risk_baseline(
 
 
 
+
+def load_latest_risk_baseline(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+    hmac_secret: str,
+    expected_account_name: str,
+    expected_account_id: str,
+) -> dict | None:
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    client.select("INBOX", readonly=True)
+    try:
+        status, data = client.search(
+            None,
+            "SUBJECT",
+            '"[TRADE-RISK-BASELINE]"',
+        )
+        if status != "OK":
+            raise RuntimeError("IMAP risk baseline search failed")
+
+        valid: list[tuple[datetime, int, dict]] = []
+        for msg_id in data[0].split():
+            status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not fetched:
+                continue
+            msg = email.message_from_bytes(fetched[0][1])
+            sender = parseaddr(msg.get("From", ""))[1].lower()
+            subject = _decode_header(msg.get("Subject")).strip()
+            if (
+                sender != user.lower()
+                or not subject.startswith("[TRADE-RISK-BASELINE] ")
+            ):
+                continue
+            try:
+                payload = json.loads(
+                    extract_json_object(_extract_text(msg))
+                )
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if not verify_internal_journal_token(
+                hmac_secret,
+                purpose="risk_baseline",
+                payload=payload,
+            ):
+                continue
+            if payload.get("environment") != "TINVEST_SANDBOX":
+                continue
+            if str(payload.get("baseline_version") or "") not in {"2", "3"}:
+                continue
+            if (
+                str(payload.get("sandbox_account_name") or "")
+                != expected_account_name
+            ):
+                continue
+            if (
+                str(payload.get("sandbox_account_id") or "")
+                != expected_account_id
+            ):
+                continue
+            try:
+                generated = datetime.fromisoformat(
+                    str(payload.get("generated_at_utc") or "").replace(
+                        "Z", "+00:00"
+                    )
+                ).astimezone(timezone.utc)
+            except Exception:
+                continue
+            valid.append((generated, int(msg_id), payload))
+
+        if not valid:
+            return None
+        valid.sort(key=lambda item: (item[0], item[1]))
+        return valid[-1][2]
+    finally:
+        client.logout()
+
+
 def has_sandbox_ready_marker(
     *,
     imap_host: str,
