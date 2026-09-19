@@ -62,6 +62,23 @@ def _send_rejection_receipt(
         "instrument_uid": command.instrument_uid,
         "instrument_type": command.instrument_type,
         "execution_capability": command.execution_capability,
+        "probability_success_percent": (
+            str(command.probability_success_percent)
+            if command.probability_success_percent is not None
+            else None
+        ),
+        "expected_value_rub": (
+            str(command.expected_value_rub)
+            if command.expected_value_rub is not None
+            else None
+        ),
+        "market_regime": command.market_regime,
+        "counter_argument": command.counter_argument,
+        "why_counter_argument_does_not_invalidate": (
+            command.why_counter_argument_does_not_invalidate
+        ),
+        "benchmark_check": command.benchmark_check,
+        "data_completeness": command.data_completeness,
         "result": {
             "status": "rejected",
             "error_type": type(exc).__name__,
@@ -156,7 +173,24 @@ def main():
                     else None
                 ),
                 "reviewer_note": command.reviewer_note,
-                "result": result,
+                        "probability_success_percent": (
+                            str(command.probability_success_percent)
+                            if command.probability_success_percent is not None
+                            else None
+                        ),
+                        "expected_value_rub": (
+                            str(command.expected_value_rub)
+                            if command.expected_value_rub is not None
+                            else None
+                        ),
+                        "market_regime": command.market_regime,
+                        "counter_argument": command.counter_argument,
+                        "why_counter_argument_does_not_invalidate": (
+                            command.why_counter_argument_does_not_invalidate
+                        ),
+                        "benchmark_check": command.benchmark_check,
+                        "data_completeness": command.data_completeness,
+                                "result": result,
             }
 
             # Journal first. Only after a persistent receipt exists do we
