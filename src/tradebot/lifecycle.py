@@ -466,14 +466,10 @@ def monitor_lifecycle_state(
                 reason="PROTECTIVE_ORDER_INACTIVE",
                 closed_status="CLOSED_FORCE_EXIT",
             )
-        out = dict(state)
-        out.update(
-            {
-                "updated_at": now.isoformat(),
-                "remaining_lots": position_lots,
-            }
-        )
-        return out
+        # Healthy protection requires no persisted state transition.
+        # Returning the original object avoids a new journal email every
+        # monitor cycle.
+        return state
 
     if stop_triggered and take_triggered:
         _cancel_all_known_protection(client, state)
