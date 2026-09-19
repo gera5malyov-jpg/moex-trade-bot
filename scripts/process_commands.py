@@ -36,6 +36,7 @@ def main():
                 app_password=cfg.mail_app_password,
                 allowed_from=cfg.mail_user,
                 signal_id=command.signal_id,
+                hmac_secret=cfg.hmac_secret,
             ):
                 print(
                     f"Duplicate command ignored: {command.signal_id}; "
@@ -98,6 +99,7 @@ def main():
                 recipient=cfg.mail_to,
                 signal_id=command.signal_id,
                 payload=receipt,
+                hmac_secret=cfg.hmac_secret,
             )
             mark_seen(
                 imap_host=cfg.imap_host,
