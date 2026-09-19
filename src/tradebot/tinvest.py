@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -175,6 +176,61 @@ class TInvestSandboxClient:
     def get_positions(self) -> dict[str, Any]:
         url = self.SANDBOX_SERVICE + "/GetSandboxPositions"
         return self._post(url, {"accountId": self.account_id})
+
+    def get_operations_by_cursor(
+        self,
+        *,
+        from_time: datetime,
+        to_time: datetime,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        if limit < 3 or limit > 1000:
+            raise ValueError("operations page limit must be between 3 and 1000")
+
+        url = self.SANDBOX_SERVICE + "/GetSandboxOperationsByCursor"
+        items: list[dict[str, Any]] = []
+        cursor = ""
+
+        while True:
+            payload: dict[str, Any] = {
+                "accountId": self.account_id,
+                "from": from_time.isoformat(),
+                "to": to_time.isoformat(),
+                "limit": limit,
+                "state": "OPERATION_STATE_EXECUTED",
+                "withoutCommissions": False,
+                "withoutTrades": False,
+                "withoutOvernights": False,
+            }
+            if cursor:
+                payload["cursor"] = cursor
+
+            page = self._post(url, payload)
+            page_items = page.get("items") or []
+            items.extend(page_items)
+
+            has_next = bool(
+                page.get("hasNext")
+                if "hasNext" in page
+                else page.get("has_next", False)
+            )
+            next_cursor = str(
+                page.get("nextCursor")
+                or page.get("next_cursor")
+                or ""
+            )
+            if not has_next:
+                break
+            if not next_cursor or next_cursor == cursor:
+                raise RuntimeError("Operations pagination returned invalid cursor")
+            cursor = next_cursor
+
+        return {
+            "items": items,
+            "count": len(items),
+            "from": from_time.isoformat(),
+            "to": to_time.isoformat(),
+        }
 
     def get_portfolio(self) -> dict[str, Any]:
         url = self.SANDBOX_SERVICE + "/GetSandboxPortfolio"
