@@ -56,6 +56,7 @@ class ProtocolTests(unittest.TestCase):
             "environment": "TINVEST_SANDBOX",
             "verified_at_utc": verified_at,
             "sandbox_account_name": "github-moex-trade-bot",
+            "sandbox_account_id": "sandbox-account-id",
             "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
             "instrument": "SBER_TQBR",
             "entry_protected": True,
@@ -68,6 +69,7 @@ class ProtocolTests(unittest.TestCase):
             secret,
             verified_at_utc=verified_at,
             sandbox_account_name="github-moex-trade-bot",
+            sandbox_account_id="sandbox-account-id",
             lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
             instrument="SBER_TQBR",
         )
@@ -76,6 +78,7 @@ class ProtocolTests(unittest.TestCase):
                 secret,
                 payload,
                 expected_account_name="github-moex-trade-bot",
+                expected_account_id="sandbox-account-id",
             )
         )
 
@@ -86,6 +89,7 @@ class ProtocolTests(unittest.TestCase):
                 secret,
                 tampered,
                 expected_account_name="github-moex-trade-bot",
+                expected_account_id="sandbox-account-id",
             )
         )
 
@@ -96,6 +100,7 @@ class ProtocolTests(unittest.TestCase):
                 secret,
                 tampered,
                 expected_account_name="github-moex-trade-bot",
+                expected_account_id="sandbox-account-id",
             )
         )
 
