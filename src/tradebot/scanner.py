@@ -148,7 +148,11 @@ def _class_code(item: dict[str, Any]) -> str:
     return str(item.get("classCode") or item.get("class_code") or "").upper()
 
 
-def _eligible(item: dict[str, Any]) -> bool:
+def _real_exchange(item: dict[str, Any]) -> str:
+    return str(item.get("realExchange") or item.get("real_exchange") or "").upper()
+
+
+def _eligible(item: dict[str, Any], instrument_type: str) -> bool:
     if item.get("apiTradeAvailableFlag") is False:
         return False
     if item.get("buyAvailableFlag") is False:
@@ -160,6 +164,12 @@ def _eligible(item: dict[str, Any]) -> bool:
     if not str(item.get("ticker") or "").strip():
         return False
     if not _class_code(item):
+        return False
+
+    # Exchange-traded candidates must be MOEX instruments. T-Invest also
+    # exposes RTS/SPB, OTC and dealer instruments through the same APIs.
+    # DFA is a special non-exchange analysis-only class and is kept separate.
+    if instrument_type != "dfa" and _real_exchange(item) != "REAL_EXCHANGE_MOEX":
         return False
     return True
 
@@ -194,7 +204,7 @@ def scan_candidates(
             universe = [
                 item
                 for item in client.list_instruments(instrument_type)
-                if _eligible(item)
+                if _eligible(item, instrument_type)
             ]
         except Exception as exc:
             print(
@@ -360,7 +370,7 @@ def enrich_candidate(
 
     instrument = candidate["instrument"]
     return {
-        "scanner_version": "1",
+        "scanner_version": "2",
         "scanner_role": "CANDIDATE_ONLY_NOT_A_TRADE_DECISION",
         "data_timestamp": now.isoformat(),
         "instrument_name": instrument.get("name"),
@@ -374,6 +384,11 @@ def enrich_candidate(
         "currency": instrument.get("currency"),
         "real_exchange": instrument.get("realExchange")
         or instrument.get("real_exchange"),
+        "market_scope": (
+            "MOEX_ONLY"
+            if candidate["instrument_type"] != "dfa"
+            else "DFA_SPECIAL_ANALYSIS_ONLY"
+        ),
         "last_price": str(candidate["last_price"]),
         "previous_close": str(candidate["close_price"]),
         "move_percent_from_close": str(candidate["move_percent"]),
