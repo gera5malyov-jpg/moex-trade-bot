@@ -16,7 +16,7 @@ def _derive_hmac_secret(tinvest_token: str) -> str:
     # Domain-separated key derivation. The T-Invest token itself is never
     # written to signals, logs, or the repository.
     return hashlib.sha256(
-        ("moex-trade-bot:command-auth:v1:" + tinvest_token).encode("utf-8")
+        ("moex-trade-bot:command-auth:v2:" + tinvest_token).encode("utf-8")
     ).hexdigest()
 
 
@@ -27,6 +27,7 @@ class Config:
     trading_enabled: bool
     hmac_secret: str
     command_max_age_minutes: int
+    signal_max_age_minutes: int
 
     mail_user: str
     mail_app_password: str
@@ -49,6 +50,7 @@ class Config:
             trading_enabled=os.getenv("TRADING_ENABLED", "false").lower() == "true",
             hmac_secret=_derive_hmac_secret(tinvest_token),
             command_max_age_minutes=int(os.getenv("COMMAND_MAX_AGE_MINUTES", "15")),
+            signal_max_age_minutes=int(os.getenv("SIGNAL_MAX_AGE_MINUTES", "15")),
             mail_user=mail_user,
             mail_app_password=_required("MAIL_APP_PASSWORD"),
             mail_to=os.getenv("MAIL_TO", "").strip() or mail_user,

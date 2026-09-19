@@ -1,22 +1,48 @@
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tradebot.protocol import (
+    PROTOCOL_VERSION,
     TradeCommand,
     make_auth_token,
-    verify_auth_token,
     quotation_from_decimal,
+    verify_auth_token,
 )
 
 
 class ProtocolTests(unittest.TestCase):
-    def test_hmac(self):
+    def _identity(self):
+        return {
+            "signal_id": "0f154e3a-8112-4aa7-82ba-3c9a98ff0f4f",
+            "created_at": "2026-09-19T17:00:00+00:00",
+            "ticker": "SBER",
+            "class_code": "TQBR",
+            "instrument_uid": "uid-sber",
+            "instrument_type": "share",
+            "execution_capability": False,
+        }
+
+    def test_hmac_binds_signal_identity(self):
         secret = "x" * 32
-        sid = "0f154e3a-8112-4aa7-82ba-3c9a98ff0f4f"
-        token = make_auth_token(secret, sid)
-        self.assertTrue(verify_auth_token(secret, sid, token))
-        self.assertFalse(verify_auth_token(secret, sid, "bad"))
+        identity = self._identity()
+        token = make_auth_token(secret, **identity)
+
+        self.assertTrue(
+            verify_auth_token(secret, token=token, **identity)
+        )
+
+        tampered = dict(identity)
+        tampered["ticker"] = "GAZP"
+        self.assertFalse(
+            verify_auth_token(secret, token=token, **tampered)
+        )
+
+        tampered = dict(identity)
+        tampered["execution_capability"] = True
+        self.assertFalse(
+            verify_auth_token(secret, token=token, **tampered)
+        )
 
     def test_quotation(self):
         self.assertEqual(
@@ -24,22 +50,67 @@ class ProtocolTests(unittest.TestCase):
             {"units": "300", "nano": 125000000},
         )
 
+    def _buy_command(self):
+        now = datetime.now(timezone.utc)
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "signal_id": "0f154e3a-8112-4aa7-82ba-3c9a98ff0f4f",
+            "signal_created_at": now.isoformat(),
+            "auth_token": "x",
+            "action": "BUY",
+            "ticker": "SBER",
+            "class_code": "TQBR",
+            "instrument_id": "SBER_TQBR",
+            "instrument_uid": "uid-sber",
+            "instrument_type": "share",
+            "execution_capability": False,
+            "order_type": "LIMIT",
+            "quantity_lots": 1,
+            "limit_price": "300",
+            "stop_loss": "295",
+            "take_profit": "312",
+            "time_stop": (now + timedelta(hours=2)).isoformat(),
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+        }
+
     def test_command_rejects_market(self):
-        expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        data = self._buy_command()
+        data["order_type"] = "MARKET"
         with self.assertRaises(ValueError):
-            TradeCommand.from_dict({
-                "protocol_version": "1",
-                "signal_id": "0f154e3a-8112-4aa7-82ba-3c9a98ff0f4f",
-                "auth_token": "x",
-                "action": "BUY",
-                "ticker": "SBER",
-                "class_code": "TQBR",
-                "instrument_id": "SBER_TQBR",
-                "order_type": "MARKET",
+            TradeCommand.from_dict(data)
+
+    def test_command_rejects_instrument_id_mismatch(self):
+        data = self._buy_command()
+        data["instrument_id"] = "GAZP_TQBR"
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
+    def test_buy_requires_protective_plan(self):
+        data = self._buy_command()
+        del data["stop_loss"]
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
+    def test_buy_requires_long_price_ordering(self):
+        data = self._buy_command()
+        data["stop_loss"] = "301"
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
+    def test_skip_requires_zero_quantity(self):
+        data = self._buy_command()
+        data.update(
+            {
+                "action": "SKIP",
                 "quantity_lots": 1,
-                "limit_price": "300",
-                "expires_at": expires,
-            })
+            }
+        )
+        data.pop("limit_price")
+        data.pop("stop_loss")
+        data.pop("take_profit")
+        data.pop("time_stop")
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
 
 
 if __name__ == "__main__":

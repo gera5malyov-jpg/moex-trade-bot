@@ -3,31 +3,70 @@ from __future__ import annotations
 from datetime import timedelta
 
 from .config import Config
-from .protocol import TradeCommand, utc_now, verify_auth_token
+from .protocol import (
+    PROTOCOL_VERSION,
+    TradeCommand,
+    parse_iso_utc,
+    utc_now,
+    verify_auth_token,
+)
 from .tinvest import TInvestSandboxClient
 
 
+# Deliberate hard lock. A BUY must not become executable merely because someone
+# flips a repository variable. This will be changed only after the sandbox
+# protective-order lifecycle (entry fill -> STOP/TAKE -> sibling cancellation ->
+# TIME_STOP) is implemented and tested end-to-end.
+PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = False
+
+
 def validate_command(command: TradeCommand, config: Config) -> None:
-    if command.protocol_version != "1":
+    if command.protocol_version != PROTOCOL_VERSION:
         raise ValueError("Unsupported protocol_version")
 
     if not verify_auth_token(
-        config.hmac_secret, command.signal_id, command.auth_token
+        config.hmac_secret,
+        signal_id=command.signal_id,
+        created_at=command.signal_created_at,
+        ticker=command.ticker,
+        class_code=command.class_code,
+        instrument_uid=command.instrument_uid,
+        instrument_type=command.instrument_type,
+        execution_capability=command.execution_capability,
+        token=command.auth_token,
     ):
-        raise ValueError("Invalid auth_token")
+        raise ValueError("Invalid auth_token or signal identity was changed")
 
     now = utc_now()
+    signal_time = parse_iso_utc(command.signal_created_at)
+    if signal_time > now + timedelta(minutes=2):
+        raise ValueError("signal_created_at is in the future")
+    if signal_time < now - timedelta(minutes=config.signal_max_age_minutes):
+        raise ValueError("Signal is stale")
+
     if command.expires_at <= now:
         raise ValueError("Command expired")
 
     max_future = now + timedelta(minutes=config.command_max_age_minutes)
     if command.expires_at > max_future:
         raise ValueError(
-            f"expires_at is too far in future; max {config.command_max_age_minutes} minutes"
+            f"expires_at is too far in future; max "
+            f"{config.command_max_age_minutes} minutes"
+        )
+
+    if command.action != "SKIP" and not command.execution_capability:
+        raise RuntimeError(
+            "Signal is analysis-only: execution_capability is false"
         )
 
     if command.action != "SKIP" and not config.trading_enabled:
         raise RuntimeError("TRADING_ENABLED is false")
+
+    if command.action == "BUY" and not PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED:
+        raise RuntimeError(
+            "BUY locked: protective STOP/TAKE/TIME_STOP lifecycle "
+            "is not implemented yet"
+        )
 
 
 def execute_command(command: TradeCommand, config: Config) -> dict:
@@ -45,20 +84,20 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         account_name=config.sandbox_account_name,
     )
     result = client.post_limit_order(
-        instrument_id=command.instrument_id,
+        ticker=command.ticker,
+        class_code=command.class_code,
+        instrument_uid=command.instrument_uid,
         side=command.action,
         quantity_lots=command.quantity_lots,
         limit_price=command.limit_price,
-        idempotency_seed=(
-            f"{command.signal_id}:{command.action}:"
-            f"{command.quantity_lots}:{command.limit_price}"
-        ),
+        # Exactly one executable broker request ID per signal.
+        idempotency_seed=f"moex-trade-bot:signal:{command.signal_id}",
     )
     return {
         "status": "submitted_to_sandbox",
         "signal_id": command.signal_id,
         "action": command.action,
-        "instrument_id": command.instrument_id,
+        "instrument_uid": command.instrument_uid,
         "quantity_lots": command.quantity_lots,
         "limit_price": str(command.limit_price),
         "broker_response": result,

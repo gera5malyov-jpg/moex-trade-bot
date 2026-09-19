@@ -17,15 +17,25 @@ def _tbank_ca_bundle() -> str:
     return str(path)
 
 
+def _as_int(value: Any) -> int:
+    if value is None or value == "":
+        return 0
+    return int(value)
+
+
 class TInvestSandboxClient:
     """
-    Intentionally hard-wired to the Sandbox host.
-    There is no production URL switch in this scaffold.
+    Hard-wired to T-Invest Sandbox. There is intentionally no production host
+    switch in this repository.
     """
 
     BASE = "https://sandbox-invest-public-api.tbank.ru/rest"
-    SANDBOX_SERVICE = BASE + "/tinkoff.public.invest.api.contract.v1.SandboxService"
-    INSTRUMENTS_SERVICE = BASE + "/tinkoff.public.invest.api.contract.v1.InstrumentsService"
+    SANDBOX_SERVICE = (
+        BASE + "/tinkoff.public.invest.api.contract.v1.SandboxService"
+    )
+    INSTRUMENTS_SERVICE = (
+        BASE + "/tinkoff.public.invest.api.contract.v1.InstrumentsService"
+    )
 
     def __init__(
         self,
@@ -36,9 +46,6 @@ class TInvestSandboxClient:
     ):
         self.timeout = timeout
         self.session = requests.Session()
-        # T-Invest currently uses the Russian Trusted Root CA. Keep TLS
-        # verification enabled and explicitly trust the public root shipped
-        # by the official T-Invest Python SDK.
         self.session.verify = _tbank_ca_bundle()
         self.session.headers.update(
             {
@@ -53,7 +60,8 @@ class TInvestSandboxClient:
         response = self.session.post(url, json=payload, timeout=self.timeout)
         if not response.ok:
             raise RuntimeError(
-                f"T-Invest API error {response.status_code}: {response.text[:1000]}"
+                f"T-Invest API error {response.status_code}: "
+                f"{response.text[:1000]}"
             )
         data = response.json()
         if not isinstance(data, dict):
@@ -66,69 +74,191 @@ class TInvestSandboxClient:
         accounts = data.get("accounts") or []
 
         exact = [
-            account for account in accounts
+            account
+            for account in accounts
             if str(account.get("name", "")).strip() == account_name
         ]
-        if not exact:
+        if len(exact) != 1:
             raise RuntimeError(
-                f'Sandbox account "{account_name}" not found. '
-                "Run the Bootstrap T-Invest Sandbox workflow first."
+                f'Expected exactly one sandbox account named "{account_name}", '
+                f"found {len(exact)}"
             )
 
-        account_id = str(exact[0].get("id") or exact[0].get("accountId") or "")
+        account_id = str(
+            exact[0].get("id") or exact[0].get("accountId") or ""
+        )
         if not account_id:
             raise RuntimeError("Sandbox account found but account ID is missing")
         return account_id
 
     def find_instrument(self, query: str) -> dict[str, Any]:
+        """
+        Exact-only instrument resolution. Never fall back to the first fuzzy
+        FindInstrument result.
+        """
+        query = query.strip()
+        if not query:
+            raise ValueError("Instrument query is empty")
+
         url = self.INSTRUMENTS_SERVICE + "/FindInstrument"
-        data = self._post(url, {"query": query, "apiTradeAvailableFlag": True})
+        data = self._post(
+            url,
+            {"query": query, "apiTradeAvailableFlag": True},
+        )
         instruments = data.get("instruments") or []
         if not instruments:
             raise RuntimeError(f"Instrument not found or not API-tradable: {query}")
 
-        ticker = query.split("_", 1)[0].upper()
-        class_code = query.split("_", 1)[1].upper() if "_" in query else None
-        exact = [
-            x for x in instruments
-            if str(x.get("ticker", "")).upper() == ticker
-            and (class_code is None or str(x.get("classCode", "")).upper() == class_code)
+        query_upper = query.upper()
+        exact_uid = [
+            x
+            for x in instruments
+            if str(x.get("uid") or x.get("instrumentUid") or "") == query
         ]
-        return (exact or instruments)[0]
+
+        exact_ticker_class: list[dict[str, Any]] = []
+        if "_" in query_upper:
+            ticker, class_code = query_upper.rsplit("_", 1)
+            exact_ticker_class = [
+                x
+                for x in instruments
+                if str(x.get("ticker", "")).upper() == ticker
+                and str(x.get("classCode") or x.get("class_code") or "").upper()
+                == class_code
+            ]
+
+        exact_figi = [
+            x
+            for x in instruments
+            if str(x.get("figi", "")).upper() == query_upper
+        ]
+
+        exact = exact_uid or exact_ticker_class or exact_figi
+        if len(exact) != 1:
+            raise RuntimeError(
+                f"Instrument resolution must be exact and unique: {query}; "
+                f"exact matches={len(exact)}"
+            )
+        return exact[0]
+
+    def resolve_instrument(
+        self,
+        *,
+        ticker: str,
+        class_code: str,
+        instrument_uid: str,
+    ) -> dict[str, Any]:
+        instrument = self.find_instrument(instrument_uid)
+        actual_uid = str(
+            instrument.get("uid") or instrument.get("instrumentUid") or ""
+        )
+        actual_ticker = str(instrument.get("ticker") or "").upper()
+        actual_class = str(
+            instrument.get("classCode")
+            or instrument.get("class_code")
+            or ""
+        ).upper()
+
+        if actual_uid != instrument_uid:
+            raise RuntimeError("Resolved instrument UID mismatch")
+        if actual_ticker != ticker.upper():
+            raise RuntimeError(
+                f"Resolved ticker mismatch: expected {ticker}, got {actual_ticker}"
+            )
+        if actual_class != class_code.upper():
+            raise RuntimeError(
+                f"Resolved class_code mismatch: expected {class_code}, "
+                f"got {actual_class}"
+            )
+        return instrument
 
     def get_positions(self) -> dict[str, Any]:
         url = self.SANDBOX_SERVICE + "/GetSandboxPositions"
         return self._post(url, {"accountId": self.account_id})
 
-    def _assert_sell_is_covered(self, instrument: dict[str, Any], lots: int) -> None:
-        uid = str(instrument.get("uid") or instrument.get("instrumentUid") or "")
-        lot = int(instrument.get("lot") or 1)
-        if not uid:
-            raise RuntimeError("Instrument UID missing; refusing SELL")
-
-        positions = self.get_positions()
-        securities = positions.get("securities") or []
-        item = next(
-            (
-                x for x in securities
-                if str(x.get("instrumentUid") or x.get("instrument_uid") or "") == uid
-            ),
-            None,
+    def get_portfolio(self) -> dict[str, Any]:
+        url = self.SANDBOX_SERVICE + "/GetSandboxPortfolio"
+        return self._post(
+            url,
+            {"accountId": self.account_id, "currency": "RUB"},
         )
-        if item is None:
-            raise RuntimeError("SELL refused: no long position found")
 
-        available_units = int(item.get("balance") or 0)
-        required_units = lots * lot
-        if available_units < required_units:
-            raise RuntimeError(
-                f"SELL refused: need {required_units} units, available {available_units}"
+    def get_max_lots(
+        self,
+        *,
+        instrument_uid: str,
+        limit_price: Decimal,
+    ) -> dict[str, Any]:
+        url = self.SANDBOX_SERVICE + "/GetSandboxMaxLots"
+        return self._post(
+            url,
+            {
+                "accountId": self.account_id,
+                "instrumentId": instrument_uid,
+                "price": quotation_from_decimal(limit_price),
+            },
+        )
+
+    def get_order_price(
+        self,
+        *,
+        instrument_uid: str,
+        side: str,
+        quantity_lots: int,
+        limit_price: Decimal,
+    ) -> dict[str, Any]:
+        url = self.SANDBOX_SERVICE + "/GetSandboxOrderPrice"
+        return self._post(
+            url,
+            {
+                "accountId": self.account_id,
+                "instrumentId": instrument_uid,
+                "price": quotation_from_decimal(limit_price),
+                "direction": f"ORDER_DIRECTION_{side}",
+                "quantity": str(quantity_lots),
+            },
+        )
+
+    def _assert_own_funds_or_position(
+        self,
+        *,
+        instrument_uid: str,
+        side: str,
+        quantity_lots: int,
+        limit_price: Decimal,
+    ) -> dict[str, Any]:
+        limits = self.get_max_lots(
+            instrument_uid=instrument_uid,
+            limit_price=limit_price,
+        )
+        if side == "BUY":
+            own = limits.get("buyLimits") or limits.get("buy_limits") or {}
+            allowed = _as_int(
+                own.get("buyMaxLots") or own.get("buy_max_lots")
             )
+            if quantity_lots > allowed:
+                raise RuntimeError(
+                    f"BUY refused: {quantity_lots} lots requested, "
+                    f"{allowed} lots available on own funds"
+                )
+        else:
+            own = limits.get("sellLimits") or limits.get("sell_limits") or {}
+            allowed = _as_int(
+                own.get("sellMaxLots") or own.get("sell_max_lots")
+            )
+            if quantity_lots > allowed:
+                raise RuntimeError(
+                    f"SELL refused: {quantity_lots} lots requested, "
+                    f"{allowed} lots available in own position"
+                )
+        return limits
 
     def post_limit_order(
         self,
         *,
-        instrument_id: str,
+        ticker: str,
+        class_code: str,
+        instrument_uid: str,
         side: str,
         quantity_lots: int,
         limit_price: Decimal,
@@ -139,10 +269,28 @@ class TInvestSandboxClient:
             raise ValueError("side must be BUY or SELL")
         if quantity_lots <= 0:
             raise ValueError("quantity_lots must be positive")
+        if not limit_price.is_finite() or limit_price <= 0:
+            raise ValueError("limit_price must be finite and positive")
 
-        instrument = self.find_instrument(instrument_id)
-        if side == "SELL":
-            self._assert_sell_is_covered(instrument, quantity_lots)
+        instrument = self.resolve_instrument(
+            ticker=ticker,
+            class_code=class_code,
+            instrument_uid=instrument_uid,
+        )
+
+        limits = self._assert_own_funds_or_position(
+            instrument_uid=instrument_uid,
+            side=side,
+            quantity_lots=quantity_lots,
+            limit_price=limit_price,
+        )
+
+        preflight = self.get_order_price(
+            instrument_uid=instrument_uid,
+            side=side,
+            quantity_lots=quantity_lots,
+            limit_price=limit_price,
+        )
 
         order_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_seed))
         payload = {
@@ -152,11 +300,32 @@ class TInvestSandboxClient:
             "accountId": self.account_id,
             "orderType": "ORDER_TYPE_LIMIT",
             "orderId": order_id,
-            "instrumentId": instrument_id,
-            "timeInForce": "TIME_IN_FORCE_DAY",
+            "instrumentId": instrument_uid,
+            # Do not leave an analyzed price resting until the end of day.
+            "timeInForce": "TIME_IN_FORCE_FILL_AND_KILL",
             "priceType": "PRICE_TYPE_CURRENCY",
             "confirmMarginTrade": False,
         }
 
         url = self.SANDBOX_SERVICE + "/PostSandboxOrder"
-        return self._post(url, payload)
+        result = self._post(url, payload)
+        return {
+            "instrument": {
+                "uid": instrument_uid,
+                "ticker": str(instrument.get("ticker") or ""),
+                "class_code": str(
+                    instrument.get("classCode")
+                    or instrument.get("class_code")
+                    or ""
+                ),
+                "instrument_type": str(
+                    instrument.get("instrumentType")
+                    or instrument.get("instrument_type")
+                    or ""
+                ),
+            },
+            "own_funds_or_position_limits": limits,
+            "preflight_order_price": preflight,
+            "post_order": result,
+            "request_order_id": order_id,
+        }

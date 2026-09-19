@@ -18,6 +18,12 @@ def main():
     ):
         try:
             command = TradeCommand.from_json(raw_json)
+            expected_subject = f"[TRADE-CMD] {command.signal_id}"
+            if subject.strip() != expected_subject:
+                raise ValueError(
+                    f"Subject mismatch: expected {expected_subject!r}"
+                )
+
             result = execute_command(command, cfg)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             mark_seen(
@@ -28,7 +34,10 @@ def main():
             )
             processed += 1
         except Exception as exc:
-            print(f"Command rejected: {subject}: {type(exc).__name__}: {exc}")
+            print(
+                f"Command rejected: {subject}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     print(f"Processed commands: {processed}")
 
