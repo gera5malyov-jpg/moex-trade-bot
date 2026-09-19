@@ -38,13 +38,16 @@ class RiskTests(unittest.TestCase):
                 "quantity_lots": 1,
                 "limit_price": "300",
                 "stop_loss": "297",
-                "take_profit": "307",
+                "take_profit": "308",
                 "time_stop": (
                     now + timedelta(hours=2)
                 ).isoformat(),
                 "expires_at": (
                     now + timedelta(minutes=5)
                 ).isoformat(),
+                "market_regime": "TREND_UP",
+                "benchmark_check": "INSUFFICIENT_HISTORY",
+                "data_completeness": "FULL",
             }
         )
 
@@ -64,6 +67,11 @@ class RiskTests(unittest.TestCase):
             instrument_lot=10,
             min_price_increment=Decimal("0.01"),
             market_spread_per_unit=Decimal("0.10"),
+            weekly_pnl_rub=Decimal("0"),
+            monthly_pnl_rub=Decimal("0"),
+            week_start_equity_rub=Decimal("1000000"),
+            month_start_equity_rub=Decimal("1000000"),
+            high_water_mark_rub=Decimal("1000000"),
             consecutive_losses=0,
         )
         self.assertLessEqual(
@@ -111,8 +119,13 @@ class RiskTests(unittest.TestCase):
                 instrument_lot=10,
                 min_price_increment=Decimal("0.01"),
             market_spread_per_unit=Decimal("0.10"),
-                consecutive_losses=0,
-            )
+            weekly_pnl_rub=Decimal("0"),
+            monthly_pnl_rub=Decimal("0"),
+            week_start_equity_rub=Decimal("1000000"),
+            month_start_equity_rub=Decimal("1000000"),
+            high_water_mark_rub=Decimal("1000000"),
+            consecutive_losses=0,
+                )
 
     def test_rejects_position_over_ten_percent(self):
         with self.assertRaises(RuntimeError):
@@ -131,6 +144,12 @@ class RiskTests(unittest.TestCase):
                 instrument_lot=10,
             min_price_increment=Decimal("0.01"),
             market_spread_per_unit=Decimal("0.10"),
+            weekly_pnl_rub=Decimal("0"),
+            monthly_pnl_rub=Decimal("0"),
+            week_start_equity_rub=Decimal("1000000"),
+            month_start_equity_rub=Decimal("1000000"),
+            high_water_mark_rub=Decimal("1000000"),
+            consecutive_losses=0,
             )
 
     def test_rejects_daily_stop(self):
@@ -150,6 +169,12 @@ class RiskTests(unittest.TestCase):
                 instrument_lot=10,
             min_price_increment=Decimal("0.01"),
             market_spread_per_unit=Decimal("0.10"),
+            weekly_pnl_rub=Decimal("0"),
+            monthly_pnl_rub=Decimal("0"),
+            week_start_equity_rub=Decimal("1000000"),
+            month_start_equity_rub=Decimal("1000000"),
+            high_water_mark_rub=Decimal("1000000"),
+            consecutive_losses=0,
             )
 
     def test_computes_daily_pnl_from_equity_baseline(self):
