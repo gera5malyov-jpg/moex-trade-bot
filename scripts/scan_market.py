@@ -31,6 +31,8 @@ def main():
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_name=cfg.sandbox_account_name,
     )
     now_utc = datetime.now(timezone.utc)
     trading_date = now_utc.astimezone(
