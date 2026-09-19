@@ -1,0 +1,14 @@
+{
+  "protocol_version": "1",
+  "signal_id": "0f154e3a-8112-4aa7-82ba-3c9a98ff0f4f",
+  "auth_token": "copy-exactly-from-signal",
+  "action": "BUY",
+  "ticker": "SBER",
+  "class_code": "TQBR",
+  "instrument_id": "SBER_TQBR",
+  "order_type": "LIMIT",
+  "quantity_lots": 1,
+  "limit_price": "300.00",
+  "expires_at": "2026-09-19T17:15:00+00:00",
+  "reviewer_note": "Example only"
+}

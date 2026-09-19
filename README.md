@@ -8,68 +8,53 @@
 В коде нет переключателя на production endpoint.
 
 Схема:
-
-1. `strategy.py` в будущем находит потенциальный вход.
-2. GitHub отправляет письмо `[TRADE-SIGNAL] ...` с данными сигнала.
-3. Внешний reviewer (в будущем ChatGPT/другой сервис) проверяет сигнал.
-4. Reviewer отправляет письмо `[TRADE-CMD] ...` в строго заданном JSON-формате.
+1. strategy.py в будущем находит потенциальный вход.
+2. GitHub отправляет письмо [TRADE-SIGNAL] с данными сигнала.
+3. Внешний reviewer проверяет сигнал.
+4. Reviewer отправляет письмо [TRADE-CMD] в строгом JSON-формате.
 5. GitHub читает команду из почты.
-6. Команда проходит проверки:
-   - UUID `signal_id`;
-   - HMAC-токен;
-   - срок действия;
-   - разрешённое действие;
-   - только LIMIT-ордер;
-   - количество лотов > 0;
-   - торговля включена;
-   - только Sandbox.
-7. Только после этого вызывается `PostSandboxOrder`.
+6. Команда проходит проверки UUID, HMAC, срока действия, типа ордера и режима Sandbox.
+7. Только после этого вызывается PostSandboxOrder.
 
 ## Важно про ChatGPT без API
 
 GitHub-часть и почтовый протокол не требуют OpenAI API.
-Но для полностью автоматического шага «пришло письмо → ChatGPT немедленно анализирует → отправляет ответ»
-нужен внешний триггер, который умеет запускать модель. В текущем подключении ChatGPT/Gmail такого
-мгновенного входящего e-mail триггера нет. Поэтому этот репозиторий готовит интерфейс для него,
-но не имитирует его и не автоматизирует веб-интерфейс ChatGPT.
+Для полностью автоматического шага «пришло письмо → ChatGPT немедленно анализирует → отправляет ответ»
+нужен внешний триггер, который умеет запускать модель. Текущий каркас готовит интерфейс для такого
+reviewer, но не имитирует его.
 
-## Secrets
+## GitHub Secrets
 
-Создайте в GitHub Repository secrets:
-
-- `TINVEST_TOKEN` — токен T-Invest API.
-- `TINVEST_SANDBOX_ACCOUNT_ID` — ID sandbox-счёта.
-- `TRADE_HMAC_SECRET` — случайная длинная строка, не менее 32 символов.
-- `MAIL_USER` — адрес почтового ящика.
-- `MAIL_APP_PASSWORD` — app password почты.
-- `MAIL_TO` — адрес, куда отправлять сигналы.
-- `COMMAND_ALLOWED_FROM` — адрес, от которого разрешено принимать команды.
+- TINVEST_TOKEN
+- TINVEST_SANDBOX_ACCOUNT_ID
+- TRADE_HMAC_SECRET — случайная строка не короче 32 символов
+- MAIL_USER
+- MAIL_APP_PASSWORD
+- MAIL_TO
+- COMMAND_ALLOWED_FROM
 
 Для Gmail:
-- IMAP: `imap.gmail.com:993`
-- SMTP: `smtp.gmail.com:465`
+- IMAP: imap.gmail.com:993
+- SMTP: smtp.gmail.com:465
 
-## Variables
+## Repository variables
 
-Можно задать Repository variables:
-
-- `TRADING_ENABLED=false` — по умолчанию торговля выключена.
-- `COMMAND_MAX_AGE_MINUTES=15`
-- `MAIL_IMAP_HOST=imap.gmail.com`
-- `MAIL_SMTP_HOST=smtp.gmail.com`
+- TRADING_ENABLED=false
+- COMMAND_MAX_AGE_MINUTES=15
+- MAIL_IMAP_HOST=imap.gmail.com
+- MAIL_SMTP_HOST=smtp.gmail.com
 
 ## Первый запуск
 
-1. Создайте sandbox-счёт в T-Invest.
-2. Пополните его тестовыми рублями.
-3. Добавьте secrets.
-4. Оставьте `TRADING_ENABLED=false`.
-5. Запустите workflow `Send test signal`.
-6. Сформируйте ответное письмо по примеру.
-7. Запустите workflow `Process trade commands`.
-8. После проверки включите `TRADING_ENABLED=true` — всё ещё только Sandbox.
+1. Добавьте TINVEST_TOKEN как GitHub Secret.
+2. Запустите workflow Bootstrap T-Invest Sandbox.
+3. Сохраните полученный accountId как TINVEST_SANDBOX_ACCOUNT_ID.
+4. Добавьте остальные secrets.
+5. Оставьте TRADING_ENABLED=false.
+6. Запустите Send test signal.
+7. После теста команд включайте TRADING_ENABLED=true — это всё ещё только Sandbox.
 
-## Почему workflow пока без расписания
+## Стратегия
 
-Стратегию и частоту сканирования мы определим отдельно.
-Это позволяет не расходовать GitHub Actions minutes до того, как торговая логика готова.
+Стратегия намеренно пока не реализована. Частоту сканирования, universe инструментов,
+правила входа/выхода и риск-менеджмент определим отдельно.

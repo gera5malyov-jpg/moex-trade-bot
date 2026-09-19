@@ -1,0 +1,21 @@
+name: Bootstrap T-Invest Sandbox
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Create sandbox account
+        env:
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+        run: python scripts/bootstrap_sandbox.py
