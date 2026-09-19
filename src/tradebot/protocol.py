@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any
@@ -136,6 +136,7 @@ class Signal:
     observed_price: str
     reason: str
     auth_token: str
+    context: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -149,6 +150,7 @@ class Signal:
         observed_price: Decimal,
         reason: str,
         execution_capability: bool = False,
+        context: dict[str, Any] | None = None,
     ) -> "Signal":
         signal_id = str(uuid.uuid4())
         created_at = utc_now().isoformat()
@@ -186,6 +188,7 @@ class Signal:
             observed_price=str(observed_price),
             reason=reason.strip(),
             auth_token=auth_token,
+            context=dict(context or {}),
         )
 
     def to_json(self) -> str:
