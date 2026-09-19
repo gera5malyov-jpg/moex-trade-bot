@@ -69,6 +69,48 @@ class RiskTests(unittest.TestCase):
             check.risk_budget_rub,
         )
 
+    def test_rejects_net_risk_reward_below_two(self):
+        data = self.command().to_dict() if hasattr(self.command(), "to_dict") else None
+        command = self.command()
+        payload = {
+            "protocol_version": command.protocol_version,
+            "signal_id": command.signal_id,
+            "signal_created_at": command.signal_created_at,
+            "auth_token": command.auth_token,
+            "action": command.action,
+            "ticker": command.ticker,
+            "class_code": command.class_code,
+            "instrument_id": command.instrument_id,
+            "instrument_uid": command.instrument_uid,
+            "instrument_type": command.instrument_type,
+            "execution_capability": command.execution_capability,
+            "order_type": command.order_type,
+            "quantity_lots": command.quantity_lots,
+            "limit_price": str(command.limit_price),
+            "stop_loss": str(command.stop_loss),
+            "take_profit": "304",
+            "time_stop": command.time_stop.isoformat(),
+            "expires_at": command.expires_at.isoformat(),
+        }
+        weak = TradeCommand.from_dict(payload)
+        with self.assertRaises(RuntimeError):
+            validate_buy_hard_risk(
+                command=weak,
+                portfolio={
+                    "totalAmountPortfolio": money("1000000"),
+                    "dailyYield": money("0"),
+                    "positions": [],
+                },
+                preflight_order_price={
+                    "initialOrderAmount": money("3000"),
+                    "totalOrderAmount": money("3001.5"),
+                    "executedCommissionRub": money("1.5"),
+                },
+                instrument_lot=10,
+                min_price_increment=Decimal("0.01"),
+                consecutive_losses=0,
+            )
+
     def test_rejects_position_over_ten_percent(self):
         with self.assertRaises(RuntimeError):
             validate_buy_hard_risk(
