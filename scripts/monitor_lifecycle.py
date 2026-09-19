@@ -11,10 +11,17 @@ from tradebot.tinvest import TInvestSandboxClient
 
 def main():
     cfg = Config.from_env()
+    client = TInvestSandboxClient(
+        token=cfg.tinvest_token,
+        account_name=cfg.sandbox_account_name,
+    )
+
     states = load_latest_lifecycle_states(
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_id=client.account_id,
     )
 
     active = [
@@ -26,11 +33,6 @@ def main():
     if not active:
         print("Active lifecycle states: 0")
         return
-
-    client = TInvestSandboxClient(
-        token=cfg.tinvest_token,
-        account_name=cfg.sandbox_account_name,
-    )
 
     transitions = 0
     errors = 0
@@ -49,6 +51,7 @@ def main():
                     recipient=cfg.mail_user,
                     signal_id=signal_id,
                     payload=updated,
+                    hmac_secret=cfg.hmac_secret,
                 )
                 print(json.dumps({
                     "signal_id": signal_id,
