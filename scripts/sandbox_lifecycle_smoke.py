@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
@@ -256,6 +257,15 @@ def main():
                     f"Smoke entry attempt {attempt} is not protected: {state.get('status')}"
                 )
         except Exception as exc:
+            remaining_after_error = client.get_position_lots(
+                instrument_uid=uid,
+                lot_size=int(instrument.get("lot") or 0),
+            )
+            if remaining_after_error != 0:
+                raise RuntimeError(
+                    "Smoke attempt failed while a position remains open; "
+                    f"remaining_lots={remaining_after_error}"
+                ) from exc
             last_error = exc
 
     if protected_state is None:
@@ -280,6 +290,16 @@ def main():
         state=cleanup_state,
         now=datetime.now(timezone.utc),
     )
+    for _ in range(10):
+        if str(final_state.get("status") or "") in FINAL_STATUSES:
+            break
+        time.sleep(2)
+        final_state = monitor_lifecycle_state(
+            client=client,
+            state=final_state,
+            now=datetime.now(timezone.utc),
+        )
+
     send_lifecycle_state_email(
         smtp_host=cfg.smtp_host,
         user=cfg.mail_user,
