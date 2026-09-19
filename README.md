@@ -16,6 +16,19 @@
 6. Команда проходит проверки UUID, HMAC, срока действия, типа ордера и режима Sandbox.
 7. Только после этого вызывается PostSandboxOrder.
 
+## T-Invest Sandbox
+
+Для первого запуска нужен только Secret `TINVEST_TOKEN`.
+
+Workflow `Bootstrap T-Invest Sandbox`:
+- ищет открытый sandbox-счёт с именем `github-moex-trade-bot`;
+- если его нет — создаёт;
+- новый счёт автоматически пополняет на **1 000 000 RUB виртуальных денег**;
+- если счёт уже существует — повторно деньги не добавляет;
+- остальные workflow сами находят этот счёт по имени.
+
+**TINVEST_SANDBOX_ACCOUNT_ID больше не нужен.**
+
 ## Важно про ChatGPT без API
 
 GitHub-часть и почтовый протокол не требуют OpenAI API.
@@ -26,7 +39,6 @@ reviewer, но не имитирует его.
 ## GitHub Secrets
 
 - TINVEST_TOKEN
-- TINVEST_SANDBOX_ACCOUNT_ID
 - TRADE_HMAC_SECRET — случайная строка не короче 32 символов
 - MAIL_USER
 - MAIL_APP_PASSWORD
@@ -46,13 +58,15 @@ reviewer, но не имитирует его.
 
 ## Первый запуск
 
-1. Добавьте TINVEST_TOKEN как GitHub Secret.
-2. Запустите workflow Bootstrap T-Invest Sandbox.
-3. Сохраните полученный accountId как TINVEST_SANDBOX_ACCOUNT_ID.
-4. Добавьте остальные secrets.
-5. Оставьте TRADING_ENABLED=false.
-6. Запустите Send test signal.
-7. После теста команд включайте TRADING_ENABLED=true — это всё ещё только Sandbox.
+1. Добавьте `TINVEST_TOKEN` как GitHub Secret.
+2. Откройте Actions → `Bootstrap T-Invest Sandbox` → `Run workflow`.
+3. Откройте завершившийся запуск → job `bootstrap` → step `Create or verify sandbox account`.
+4. В логе увидите:
+   - имя sandbox-счёта;
+   - его account ID;
+   - пополнение на 1 000 000 RUB при первом создании;
+   - текущий доступный RUB-баланс при повторном запуске.
+5. Ничего из account ID вручную сохранять не надо.
 
 ## Стратегия
 
