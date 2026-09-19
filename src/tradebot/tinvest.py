@@ -413,6 +413,7 @@ class TInvestSandboxClient:
         request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_seed))
         payload: dict[str, Any] = {
             "quantity": str(quantity_lots),
+            "price": quotation_from_decimal(stop_price),
             "stopPrice": quotation_from_decimal(stop_price),
             "direction": "STOP_ORDER_DIRECTION_SELL",
             "accountId": self.account_id,
@@ -424,12 +425,14 @@ class TInvestSandboxClient:
             "confirmMarginTrade": False,
         }
         if stop_order_type == "STOP_ORDER_TYPE_TAKE_PROFIT":
-            # Profit-taking remains a LIMIT exit. Protective STOP_LOSS is the
-            # only deliberate market-style exception because capital
-            # protection has priority over price improvement.
-            payload["price"] = quotation_from_decimal(stop_price)
+            # Profit-taking remains a LIMIT exit.
             payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_LIMIT"
             payload["takeProfitType"] = "TAKE_PROFIT_TYPE_REGULAR"
+        else:
+            # Narrow safety exception: STOP_LOSS creates a market-style child
+            # so a fast adverse move is not left unprotected by a resting
+            # limit order. The stop trigger itself is still explicit.
+            payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_MARKET"
 
         result = self._post(
             self.SANDBOX_SERVICE + "/PostSandboxStopOrder",
