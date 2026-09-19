@@ -10,6 +10,7 @@ from .protocol import (
     utc_now,
     verify_auth_token,
 )
+from .risk import validate_buy_hard_risk
 from .tinvest import TInvestSandboxClient
 
 
@@ -18,6 +19,10 @@ from .tinvest import TInvestSandboxClient
 # protective-order lifecycle (entry fill -> STOP/TAKE -> sibling cancellation ->
 # TIME_STOP) is implemented and tested end-to-end.
 PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = False
+
+# Until price semantics and protective lifecycle are independently validated,
+# automatic execution is restricted to ordinary cash-market shares and ETFs.
+EXECUTION_SUPPORTED_TYPES = {"share", "etf"}
 
 
 def validate_command(command: TradeCommand, config: Config) -> None:
@@ -59,6 +64,15 @@ def validate_command(command: TradeCommand, config: Config) -> None:
             "Signal is analysis-only: execution_capability is false"
         )
 
+    if (
+        command.action != "SKIP"
+        and command.instrument_type not in EXECUTION_SUPPORTED_TYPES
+    ):
+        raise RuntimeError(
+            f"Automatic execution is not yet supported for "
+            f"instrument_type={command.instrument_type!r}"
+        )
+
     if command.action != "SKIP" and not config.trading_enabled:
         raise RuntimeError("TRADING_ENABLED is false")
 
@@ -83,6 +97,25 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         token=config.tinvest_token,
         account_name=config.sandbox_account_name,
     )
+    prepared = client.prepare_limit_order(
+        ticker=command.ticker,
+        class_code=command.class_code,
+        instrument_uid=command.instrument_uid,
+        side=command.action,
+        quantity_lots=command.quantity_lots,
+        limit_price=command.limit_price,
+    )
+
+    hard_risk = None
+    if command.action == "BUY":
+        lot = int(prepared["instrument"].get("lot") or 0)
+        hard_risk = validate_buy_hard_risk(
+            command=command,
+            portfolio=prepared["portfolio"],
+            preflight_order_price=prepared["preflight_order_price"],
+            instrument_lot=lot,
+        )
+
     result = client.post_limit_order(
         ticker=command.ticker,
         class_code=command.class_code,
@@ -92,6 +125,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         limit_price=command.limit_price,
         # Exactly one executable broker request ID per signal.
         idempotency_seed=f"moex-trade-bot:signal:{command.signal_id}",
+        prepared=prepared,
     )
     return {
         "status": "submitted_to_sandbox",
@@ -100,5 +134,18 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         "instrument_uid": command.instrument_uid,
         "quantity_lots": command.quantity_lots,
         "limit_price": str(command.limit_price),
+        "hard_risk": (
+            {
+                "capital_rub": str(hard_risk.capital_rub),
+                "daily_yield_rub": str(hard_risk.daily_yield_rub),
+                "position_value_rub": str(hard_risk.position_value_rub),
+                "max_loss_rub": str(hard_risk.max_loss_rub),
+                "risk_budget_rub": str(hard_risk.risk_budget_rub),
+                "position_cap_rub": str(hard_risk.position_cap_rub),
+                "open_positions": hard_risk.open_positions,
+            }
+            if hard_risk is not None
+            else None
+        ),
         "broker_response": result,
     }
