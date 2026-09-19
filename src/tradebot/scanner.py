@@ -182,6 +182,13 @@ def scan_candidates(
     now = datetime.now(timezone.utc)
     all_candidates: list[dict[str, Any]] = []
 
+    # Empty instrument lists are used intentionally so T-Invest returns
+    # all available last/close prices in one request per endpoint.
+    last_items = client.get_last_prices([])
+    close_items = client.get_close_prices([])
+    last_map = _price_map(last_items, "price")
+    close_map = _price_map(close_items, "price")
+
     for instrument_type in INSTRUMENT_TYPES:
         try:
             universe = [
@@ -195,24 +202,6 @@ def scan_candidates(
                 f"{type(exc).__name__}: {exc}"
             )
             continue
-
-        uids = [_uid(x) for x in universe]
-        last_items: list[dict[str, Any]] = []
-        close_items: list[dict[str, Any]] = []
-        for batch in _chunks(uids):
-            if not batch:
-                continue
-            try:
-                last_items.extend(client.get_last_prices(batch))
-                close_items.extend(client.get_close_prices(batch))
-            except Exception as exc:
-                print(
-                    f"Scanner price batch skipped for {instrument_type}: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-        last_map = _price_map(last_items, "price")
-        close_map = _price_map(close_items, "price")
 
         type_candidates: list[dict[str, Any]] = []
         for instrument in universe:
@@ -272,7 +261,6 @@ def scan_candidates(
         reverse=True,
     )
     return all_candidates
-
 
 def _compact_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     positions = []
