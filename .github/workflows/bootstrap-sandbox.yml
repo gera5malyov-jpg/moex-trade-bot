@@ -2,6 +2,9 @@ name: Bootstrap T-Invest Sandbox
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "scripts/bootstrap_sandbox.py"
 
 jobs:
   bootstrap:
