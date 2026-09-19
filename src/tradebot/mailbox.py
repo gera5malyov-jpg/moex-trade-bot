@@ -158,6 +158,26 @@ def send_execution_receipt(
     )
 
 
+
+def send_lifecycle_state_email(
+    *,
+    smtp_host: str,
+    user: str,
+    app_password: str,
+    recipient: str,
+    signal_id: str,
+    payload: dict,
+) -> None:
+    _send_text_email(
+        smtp_host=smtp_host,
+        user=user,
+        app_password=app_password,
+        recipient=recipient,
+        subject=f"[TRADE-LIFECYCLE] {signal_id}",
+        body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+    )
+
+
 def send_risk_baseline_email(
     *,
     smtp_host: str,
@@ -312,6 +332,51 @@ def _imap_has_exact_subject_from(
             ):
                 return True
         return False
+    finally:
+        client.logout()
+
+
+
+def load_latest_lifecycle_states(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+) -> list[dict]:
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    client.select("INBOX", readonly=True)
+    try:
+        status, data = client.search(None, "SUBJECT", '"[TRADE-LIFECYCLE]"')
+        if status != "OK":
+            raise RuntimeError("IMAP lifecycle search failed")
+
+        latest: dict[str, tuple[int, dict]] = {}
+        for msg_id in data[0].split():
+            status, fetched = client.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not fetched:
+                continue
+            raw = fetched[0][1]
+            msg = email.message_from_bytes(raw)
+            sender = parseaddr(msg.get("From", ""))[1].lower()
+            subject = _decode_header(msg.get("Subject")).strip()
+            if sender != user.lower() or not subject.startswith("[TRADE-LIFECYCLE] "):
+                continue
+            try:
+                payload = json.loads(extract_json_object(_extract_text(msg)))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            signal_id = str(payload.get("signal_id") or "").strip()
+            if not signal_id:
+                continue
+            numeric_id = int(msg_id)
+            previous = latest.get(signal_id)
+            if previous is None or numeric_id > previous[0]:
+                latest[signal_id] = (numeric_id, payload)
+
+        return [item[1] for item in latest.values()]
     finally:
         client.logout()
 
