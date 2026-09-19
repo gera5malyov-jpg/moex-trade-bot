@@ -2,7 +2,10 @@ import json
 import os
 
 from tradebot.config import Config
-from tradebot.mailbox import send_signal_email
+from tradebot.mailbox import (
+    has_recent_signal_for_instrument,
+    send_signal_email,
+)
 from tradebot.protocol import Signal
 from tradebot.scanner import enrich_candidate, scan_candidates
 from tradebot.tinvest import TInvestSandboxClient
@@ -17,6 +20,7 @@ def main():
 
     max_per_type = int(os.getenv("SCANNER_MAX_PER_TYPE", "1"))
     max_signals = int(os.getenv("SCANNER_MAX_SIGNALS", "6"))
+    cooldown_minutes = int(os.getenv("SCANNER_COOLDOWN_MINUTES", "45"))
 
     candidates = scan_candidates(
         client,
@@ -24,8 +28,23 @@ def main():
     )
 
     sent = 0
-    for candidate in candidates[:max_signals]:
+    for candidate in candidates:
+        if sent >= max_signals:
+            break
         try:
+            if has_recent_signal_for_instrument(
+                imap_host=cfg.imap_host,
+                user=cfg.mail_user,
+                app_password=cfg.mail_app_password,
+                instrument_uid=candidate["instrument_uid"],
+                within_minutes=cooldown_minutes,
+            ):
+                print(
+                    f"Candidate skipped by cooldown: "
+                    f"{candidate['ticker']} ({candidate['instrument_uid']})"
+                )
+                continue
+
             context = enrich_candidate(client, candidate)
             signal = Signal.create(
                 secret=cfg.hmac_secret,
@@ -52,6 +71,7 @@ def main():
                 recipient=cfg.mail_to,
                 signal_id=signal.signal_id,
                 json_body=signal.to_json(),
+                instrument_uid=signal.instrument_uid,
             )
             print(
                 json.dumps(
