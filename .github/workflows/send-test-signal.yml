@@ -1,11 +1,7 @@
 name: Send test signal
-# one-time Outlook bridge verification
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/send-test-signal.yml"
 
 permissions:
   contents: read
