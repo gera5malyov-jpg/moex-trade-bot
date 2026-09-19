@@ -157,6 +157,8 @@ def validate_command(command: TradeCommand, config: Config) -> None:
         imap_host=config.imap_host,
         user=config.mail_user,
         app_password=config.mail_app_password,
+        hmac_secret=config.hmac_secret,
+        expected_account_name=config.sandbox_account_name,
     ):
         raise RuntimeError(
             "BUY locked: live Sandbox protective lifecycle smoke test "
