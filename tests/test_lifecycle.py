@@ -92,7 +92,13 @@ class FakeClient:
         ]
 
     def get_order_state(self, order_id):
-        return dict(self.child_state)
+        result = dict(self.child_state)
+        if (
+            result.get("executionReportStatus")
+            == "EXECUTION_REPORT_STATUS_FILL"
+        ):
+            self.position_lots = 0
+        return result
 
 
 class LifecycleTests(unittest.TestCase):
@@ -180,7 +186,13 @@ class LifecycleTests(unittest.TestCase):
             client=client,
             state=state,
         )
+        self.assertEqual(updated["status"], "PROTECTIVE_CHILD_PENDING")
+        updated = monitor_lifecycle_state(
+            client=client,
+            state=updated,
+        )
         self.assertEqual(updated["status"], "CLOSED_STOP_LOSS")
+        self.assertEqual(client.position_lots, 0)
         self.assertIn("take-profit-id", client.cancelled)
 
     def test_time_stop_waits_for_verified_cancellation(self):
