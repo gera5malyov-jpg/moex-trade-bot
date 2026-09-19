@@ -2,9 +2,6 @@ name: Scan market candidates
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/scan-market.yml"
   schedule:
     # Every 15 minutes, weekdays, 07:00–23:45 Moscow (UTC+3).
     - cron: "*/15 4-20 * * 1-5"
@@ -44,23 +41,3 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/scan_market.py
-
-      - name: Probe Gmail cooldown journal
-        env:
-          PYTHONPATH: src
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-        run: |
-          python - <<'PY'
-          import os
-          from tradebot.mailbox import has_recent_signal_for_instrument
-          result = has_recent_signal_for_instrument(
-              imap_host=os.environ["MAIL_IMAP_HOST"],
-              user=os.environ["MAIL_USER"],
-              app_password=os.environ["MAIL_APP_PASSWORD"],
-              instrument_uid="cooldown-probe-does-not-exist",
-              within_minutes=45,
-          )
-          print(f"Cooldown mailbox probe result={result}")
-          PY
