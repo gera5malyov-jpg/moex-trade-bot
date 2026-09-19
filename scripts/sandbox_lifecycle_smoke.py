@@ -12,7 +12,13 @@ from tradebot.mailbox import (
     send_lifecycle_state_email,
     send_sandbox_ready_email,
 )
-from tradebot.protocol import TradeCommand, parse_iso_utc
+from tradebot.protocol import (
+    PROTECTIVE_LIFECYCLE_VERSION,
+    SANDBOX_READY_VERSION,
+    TradeCommand,
+    make_sandbox_readiness_token,
+    parse_iso_utc,
+)
 from tradebot.risk import (
     compute_consecutive_losses,
     compute_daily_pnl_rub,
@@ -105,6 +111,8 @@ def main():
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_name=cfg.sandbox_account_name,
     ):
         print("Sandbox readiness marker already exists; smoke test skipped")
         return
@@ -222,6 +230,17 @@ def main():
             if state.get("status") == "PROTECTED":
                 protected_state = state
                 break
+
+            remaining_after_attempt = client.get_position_lots(
+                instrument_uid=uid,
+                lot_size=int(prepared["instrument"].get("lot") or 0),
+            )
+            if remaining_after_attempt != 0:
+                raise RuntimeError(
+                    "Smoke attempt did not establish protection and left "
+                    f"{remaining_after_attempt} lots open; refusing retry"
+                )
+
             if state.get("status") in FINAL_STATUSES:
                 last_error = RuntimeError(
                     f"Smoke entry attempt {attempt} ended as {state.get('status')}"
@@ -277,26 +296,39 @@ def main():
             f"Smoke cleanup did not reach final lifecycle state: {final_state.get('status')}"
         )
 
+    verified_at_utc = datetime.now(timezone.utc).isoformat()
+    readiness_payload = {
+        "ready_version": SANDBOX_READY_VERSION,
+        "environment": "TINVEST_SANDBOX",
+        "verified_at_utc": verified_at_utc,
+        "sandbox_account_name": cfg.sandbox_account_name,
+        "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
+        "smoke_date_moscow": moscow_date,
+        "instrument": "SBER_TQBR",
+        "entry_protected": True,
+        "stop_loss_active_verified": True,
+        "take_profit_active_verified": True,
+        "time_stop_force_exit_verified": True,
+        "position_after_cleanup_lots": 0,
+        "daily_pnl_rub_at_test": str(daily_pnl),
+        "consecutive_losses_at_test": consecutive_losses,
+        "risk_budget_rub": str(
+            hard_risk.risk_budget_rub if hard_risk else ""
+        ),
+        "note": "Sandbox-only readiness marker. Not valid for production.",
+    }
+    readiness_payload["readiness_token"] = make_sandbox_readiness_token(
+        cfg.hmac_secret,
+        verified_at_utc=verified_at_utc,
+        sandbox_account_name=cfg.sandbox_account_name,
+        lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
+        instrument="SBER_TQBR",
+    )
     send_sandbox_ready_email(
         smtp_host=cfg.smtp_host,
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
-        payload={
-            "ready_version": "1",
-            "environment": "TINVEST_SANDBOX",
-            "verified_at_utc": datetime.now(timezone.utc).isoformat(),
-            "smoke_date_moscow": moscow_date,
-            "instrument": "SBER_TQBR",
-            "entry_protected": True,
-            "stop_loss_active_verified": True,
-            "take_profit_active_verified": True,
-            "time_stop_force_exit_verified": True,
-            "position_after_cleanup_lots": 0,
-            "daily_pnl_rub_at_test": str(daily_pnl),
-            "consecutive_losses_at_test": consecutive_losses,
-            "risk_budget_rub": str(hard_risk.risk_budget_rub if hard_risk else ""),
-            "note": "Sandbox-only readiness marker. Not valid for production.",
-        },
+        payload=readiness_payload,
     )
 
     print(json.dumps({
