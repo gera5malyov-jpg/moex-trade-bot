@@ -11,6 +11,7 @@ from tradebot.protocol import TradeCommand
 
 class FakeClient:
     def __init__(self, fail_take=False):
+        self.account_id = "sandbox-test-account"
         self.fail_take = fail_take
         self.position_lots = 1
         self.cancelled = []
