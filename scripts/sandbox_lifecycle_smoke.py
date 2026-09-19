@@ -133,6 +133,8 @@ def main():
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
         trading_date=moscow_date,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_name=cfg.sandbox_account_name,
     )
     baseline_time = parse_iso_utc(
         str(baseline.get("generated_at_utc") or "")
@@ -227,6 +229,7 @@ def main():
                 recipient=cfg.mail_user,
                 signal_id=command.signal_id,
                 payload=state,
+                hmac_secret=cfg.hmac_secret,
             )
             if state.get("status") == "PROTECTED":
                 protected_state = state
@@ -282,6 +285,7 @@ def main():
         recipient=cfg.mail_user,
         signal_id=str(final_state["signal_id"]),
         payload=final_state,
+        hmac_secret=cfg.hmac_secret,
     )
 
     remaining = client.get_position_lots(
