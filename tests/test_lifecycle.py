@@ -145,6 +145,8 @@ class LifecycleTests(unittest.TestCase):
                 "market_regime": "TREND_UP",
                 "benchmark_check": "INSUFFICIENT_HISTORY",
                 "data_completeness": "FULL",
+            "counter_argument": "TEST_COUNTER_ARGUMENT",
+            "why_counter_argument_does_not_invalidate": "TEST_REBUTTAL",
             }
         )
 
