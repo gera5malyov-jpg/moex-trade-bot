@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import requests
 
 from .protocol import quotation_from_decimal
+
+
+def _tbank_ca_bundle() -> str:
+    path = Path(__file__).resolve().parents[2] / "certs" / "RussianTrustedRootCA.pem"
+    if not path.is_file():
+        raise RuntimeError(f"T-Bank CA certificate not found: {path}")
+    return str(path)
 
 
 class TInvestSandboxClient:
@@ -28,6 +36,10 @@ class TInvestSandboxClient:
     ):
         self.timeout = timeout
         self.session = requests.Session()
+        # T-Invest currently uses the Russian Trusted Root CA. Keep TLS
+        # verification enabled and explicitly trust the public root shipped
+        # by the official T-Invest Python SDK.
+        self.session.verify = _tbank_ca_bundle()
         self.session.headers.update(
             {
                 "Authorization": f"Bearer {token}",
