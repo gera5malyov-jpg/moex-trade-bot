@@ -142,6 +142,9 @@ class LifecycleTests(unittest.TestCase):
                     time_stop or (now + timedelta(hours=2))
                 ).isoformat(),
                 "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "market_regime": "TREND_UP",
+                "benchmark_check": "INSUFFICIENT_HISTORY",
+                "data_completeness": "FULL",
             }
         )
 
