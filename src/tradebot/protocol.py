@@ -151,6 +151,7 @@ def make_sandbox_readiness_token(
     *,
     verified_at_utc: str,
     sandbox_account_name: str,
+    sandbox_account_id: str,
     lifecycle_version: str,
     instrument: str,
 ) -> str:
