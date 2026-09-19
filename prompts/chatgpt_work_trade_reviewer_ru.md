@@ -305,9 +305,18 @@ execution_capability приходит из GitHub и является подпи
 
 Текущий репозиторий должен оставаться Sandbox-only. Не пытайся переключать его на production.
 
-Пока GitHub-исполнитель не реализовал и не протестировал полный защитный lifecycle:
-entry fill -> STOP_LOSS/TAKE_PROFIT -> отмена sibling-заказа -> TIME_STOP/FORCE_EXIT,
-новый BUY считается технически заблокированным и должен быть SKIP.
+GitHub-исполнитель содержит защитный lifecycle:
+entry fill -> STOP_LOSS/TAKE_PROFIT -> отмена sibling-заказа -> TIME_STOP/FORCE_EXIT.
+
+Однако новый BUY разрешается рассматривать только если сам подписанный сигнал имеет execution_capability=true. Сканер выставляет true только для поддерживаемых share/ETF после успешного живого Sandbox smoke-теста, наличия маркера TRADE-SANDBOX-READY и доступного дневного risk-baseline.
+
+Если context.hard_risk_context присутствует, перед BUY дополнительно требуй:
+- sandbox_ready = true;
+- daily_pnl_rub доступен;
+- consecutive_losses доступен и меньше 3;
+- error = null.
+
+Если execution_capability=false, readiness не подтвержден или hard_risk_context противоречив — только SKIP.
 
 # 13. ТРОЙНАЯ ПРОВЕРКА ПЕРЕД BUY
 
