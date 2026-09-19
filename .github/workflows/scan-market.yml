@@ -2,16 +2,13 @@ name: Scan market candidates
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/scan-market.yml"
 
 permissions:
   contents: read
 
 concurrency:
   group: scan-market-candidates
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   scan:
