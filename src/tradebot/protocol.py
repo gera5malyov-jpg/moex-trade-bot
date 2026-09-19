@@ -36,6 +36,18 @@ def _positive_decimal(value: Any, field: str) -> Decimal:
     return result
 
 
+def _optional_decimal(value: Any, field: str) -> Decimal | None:
+    if value in (None, "", "UNAVAILABLE"):
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError(f"{field} must be a decimal number") from exc
+    if not result.is_finite():
+        raise ValueError(f"{field} must be finite")
+    return result
+
+
 def _signal_auth_payload(
     *,
     signal_id: str,
@@ -342,6 +354,77 @@ class Signal:
             instrument_type=instrument_type,
             execution_capability=execution_capability,
         )
+        probability_success_percent = _optional_decimal(
+            data.get("probability_success_percent"),
+            "probability_success_percent",
+        )
+        if (
+            probability_success_percent is not None
+            and not (
+                Decimal("0")
+                <= probability_success_percent
+                <= Decimal("100")
+            )
+        ):
+            raise ValueError(
+                "probability_success_percent must be between 0 and 100"
+            )
+
+        expected_value_rub = _optional_decimal(
+            data.get("expected_value_rub"),
+            "expected_value_rub",
+        )
+        market_regime = str(
+            data.get("market_regime") or "UNKNOWN"
+        ).upper().strip()
+        allowed_regimes = {
+            "TREND_UP",
+            "TREND_DOWN",
+            "RANGE",
+            "HIGH_VOLATILITY",
+            "PANIC",
+            "UNKNOWN",
+        }
+        if market_regime not in allowed_regimes:
+            raise ValueError("Unsupported market_regime")
+
+        benchmark_check = str(
+            data.get("benchmark_check") or "INSUFFICIENT_HISTORY"
+        ).upper().strip()
+        if benchmark_check not in {
+            "PASS",
+            "FAIL",
+            "INSUFFICIENT_HISTORY",
+        }:
+            raise ValueError("Unsupported benchmark_check")
+
+        data_completeness = str(
+            data.get("data_completeness") or "PARTIAL"
+        ).upper().strip()
+        if data_completeness not in {"FULL", "PARTIAL"}:
+            raise ValueError("Unsupported data_completeness")
+
+        if action == "BUY":
+            if data_completeness != "FULL":
+                raise ValueError("BUY requires DATA_COMPLETENESS=FULL")
+            if benchmark_check == "FAIL":
+                raise ValueError("BUY blocked: benchmark check failed")
+            if market_regime in {
+                "TREND_DOWN",
+                "HIGH_VOLATILITY",
+                "PANIC",
+            }:
+                raise ValueError(
+                    f"BUY blocked in market_regime={market_regime}"
+                )
+            if (
+                probability_success_percent is not None
+                and probability_success_percent < Decimal("40")
+            ):
+                raise ValueError(
+                    "BUY blocked: calibrated probability below 40%"
+                )
+
         return cls(
             protocol_version=PROTOCOL_VERSION,
             signal_id=signal_id,
@@ -383,6 +466,13 @@ class TradeCommand:
     time_stop: datetime | None
     expires_at: datetime
     reviewer_note: str
+    probability_success_percent: Decimal | None = None
+    expected_value_rub: Decimal | None = None
+    market_regime: str = "UNKNOWN"
+    counter_argument: str = ""
+    why_counter_argument_does_not_invalidate: str = ""
+    benchmark_check: str = "INSUFFICIENT_HISTORY"
+    data_completeness: str = "PARTIAL"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TradeCommand":
@@ -495,6 +585,20 @@ class TradeCommand:
             time_stop=time_stop,
             expires_at=parse_iso_utc(str(data["expires_at"])),
             reviewer_note=str(data.get("reviewer_note", "")).strip(),
+            probability_success_percent=probability_success_percent,
+            expected_value_rub=expected_value_rub,
+            market_regime=market_regime,
+            counter_argument=str(
+                data.get("counter_argument", "")
+            ).strip(),
+            why_counter_argument_does_not_invalidate=str(
+                data.get(
+                    "why_counter_argument_does_not_invalidate",
+                    "",
+                )
+            ).strip(),
+            benchmark_check=benchmark_check,
+            data_completeness=data_completeness,
         )
 
     @classmethod
