@@ -8,9 +8,11 @@ from tradebot.protocol import (
     SANDBOX_READY_VERSION,
     TradeCommand,
     make_auth_token,
+    make_internal_journal_token,
     make_sandbox_readiness_token,
     quotation_from_decimal,
     verify_auth_token,
+    verify_internal_journal_token,
     verify_sandbox_readiness_payload,
 )
 
@@ -101,6 +103,35 @@ class ProtocolTests(unittest.TestCase):
                 tampered,
                 expected_account_name="github-moex-trade-bot",
                 expected_account_id="sandbox-account-id",
+            )
+        )
+
+    def test_internal_journal_hmac_rejects_tampering(self):
+        secret = "j" * 32
+        payload = {
+            "environment": "TINVEST_SANDBOX",
+            "signal_id": "abc",
+            "status": "PROTECTED",
+        }
+        payload["journal_token"] = make_internal_journal_token(
+            secret,
+            purpose="lifecycle_state",
+            payload=payload,
+        )
+        self.assertTrue(
+            verify_internal_journal_token(
+                secret,
+                purpose="lifecycle_state",
+                payload=payload,
+            )
+        )
+        tampered = dict(payload)
+        tampered["status"] = "CLOSED_POSITION_GONE"
+        self.assertFalse(
+            verify_internal_journal_token(
+                secret,
+                purpose="lifecycle_state",
+                payload=tampered,
             )
         )
 
