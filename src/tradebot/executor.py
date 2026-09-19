@@ -4,7 +4,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from .config import Config
-from .mailbox import load_risk_baseline
+from .mailbox import load_risk_baseline, send_lifecycle_state_email
 from .protocol import (
     PROTOCOL_VERSION,
     TradeCommand,
@@ -12,6 +12,7 @@ from .protocol import (
     utc_now,
     verify_auth_token,
 )
+from .lifecycle import open_protected_long
 from .risk import compute_daily_pnl_rub, validate_buy_hard_risk
 from .tinvest import TInvestSandboxClient
 
@@ -147,19 +148,41 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             daily_pnl_rub=daily_pnl,
         )
 
-    result = client.post_limit_order(
-        ticker=command.ticker,
-        class_code=command.class_code,
-        instrument_uid=command.instrument_uid,
-        side=command.action,
-        quantity_lots=command.quantity_lots,
-        limit_price=command.limit_price,
-        # Exactly one executable broker request ID per signal.
-        idempotency_seed=f"moex-trade-bot:signal:{command.signal_id}",
-        prepared=prepared,
-    )
+    if command.action == "BUY":
+        lifecycle_state = open_protected_long(
+            client=client,
+            command=command,
+            prepared=prepared,
+        )
+        send_lifecycle_state_email(
+            smtp_host=config.smtp_host,
+            user=config.mail_user,
+            app_password=config.mail_app_password,
+            recipient=config.mail_user,
+            signal_id=command.signal_id,
+            payload=lifecycle_state,
+        )
+        broker_result: dict = {
+            "lifecycle_state": lifecycle_state,
+        }
+        status = "protected_lifecycle_started"
+    else:
+        result = client.post_limit_order(
+            ticker=command.ticker,
+            class_code=command.class_code,
+            instrument_uid=command.instrument_uid,
+            side=command.action,
+            quantity_lots=command.quantity_lots,
+            limit_price=command.limit_price,
+            # Exactly one executable broker request ID per signal.
+            idempotency_seed=f"moex-trade-bot:signal:{command.signal_id}",
+            prepared=prepared,
+        )
+        broker_result = result
+        status = "submitted_to_sandbox"
+
     return {
-        "status": "submitted_to_sandbox",
+        "status": status,
         "signal_id": command.signal_id,
         "action": command.action,
         "instrument_uid": command.instrument_uid,
@@ -178,5 +201,5 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             if hard_risk is not None
             else None
         ),
-        "broker_response": result,
+        "broker_response": broker_result,
     }
