@@ -112,6 +112,7 @@ def main():
         app_password=cfg.mail_app_password,
         hmac_secret=cfg.hmac_secret,
         expected_account_name=cfg.sandbox_account_name,
+        expected_account_id=client.account_id,
     )
     now_utc = datetime.now(timezone.utc)
     trading_date = now_utc.astimezone(
@@ -133,6 +134,7 @@ def main():
             trading_date=trading_date,
             hmac_secret=cfg.hmac_secret,
             expected_account_name=cfg.sandbox_account_name,
+            expected_account_id=client.account_id,
         )
         baseline_time = parse_iso_utc(
             str(baseline.get("generated_at_utc") or "")
