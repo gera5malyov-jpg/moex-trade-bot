@@ -19,7 +19,7 @@ jobs:
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_ID: ${{ secrets.TINVEST_SANDBOX_ACCOUNT_ID }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADE_HMAC_SECRET: ${{ secrets.TRADE_HMAC_SECRET }}
           TRADING_ENABLED: ${{ vars.TRADING_ENABLED || 'false' }}
           COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
