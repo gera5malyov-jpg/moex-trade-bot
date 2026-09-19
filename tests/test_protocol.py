@@ -162,6 +162,9 @@ class ProtocolTests(unittest.TestCase):
             "take_profit": "312",
             "time_stop": (now + timedelta(hours=2)).isoformat(),
             "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "market_regime": "TREND_UP",
+            "benchmark_check": "INSUFFICIENT_HISTORY",
+            "data_completeness": "FULL",
         }
 
     def test_command_rejects_market(self):
@@ -185,6 +188,18 @@ class ProtocolTests(unittest.TestCase):
     def test_buy_requires_long_price_ordering(self):
         data = self._buy_command()
         data["stop_loss"] = "301"
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
+    def test_buy_rejects_partial_data(self):
+        data = self._buy_command()
+        data["data_completeness"] = "PARTIAL"
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
+    def test_buy_rejects_bad_market_regime(self):
+        data = self._buy_command()
+        data["market_regime"] = "PANIC"
         with self.assertRaises(ValueError):
             TradeCommand.from_dict(data)
 
