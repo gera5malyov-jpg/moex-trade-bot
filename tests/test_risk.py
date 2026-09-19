@@ -101,6 +101,9 @@ class RiskTests(unittest.TestCase):
             "take_profit": "304",
             "time_stop": command.time_stop.isoformat(),
             "expires_at": command.expires_at.isoformat(),
+            "market_regime": "TREND_UP",
+            "benchmark_check": "INSUFFICIENT_HISTORY",
+            "data_completeness": "FULL",
         }
         weak = TradeCommand.from_dict(payload)
         with self.assertRaises(RuntimeError):
