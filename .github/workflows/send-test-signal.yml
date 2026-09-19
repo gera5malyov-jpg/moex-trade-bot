@@ -2,9 +2,6 @@ name: Send test signal
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/send-test-signal.yml"
 
 jobs:
   send:
