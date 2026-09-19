@@ -457,6 +457,7 @@ def has_risk_baseline(
     trading_date: str,
     hmac_secret: str,
     expected_account_name: str,
+    expected_account_id: str,
 ) -> bool:
     try:
         load_risk_baseline(
@@ -466,6 +467,7 @@ def has_risk_baseline(
             trading_date=trading_date,
             hmac_secret=hmac_secret,
             expected_account_name=expected_account_name,
+            expected_account_id=expected_account_id,
         )
         return True
     except RuntimeError:
