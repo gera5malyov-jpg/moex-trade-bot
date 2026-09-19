@@ -3,7 +3,11 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tradebot.protocol import TradeCommand
-from tradebot.risk import compute_daily_pnl_rub, validate_buy_hard_risk
+from tradebot.risk import (
+    compute_consecutive_losses,
+    compute_daily_pnl_rub,
+    validate_buy_hard_risk,
+)
 
 
 def money(value: str):
@@ -57,6 +61,7 @@ class RiskTests(unittest.TestCase):
                 "executedCommissionRub": money("1.5"),
             },
             instrument_lot=10,
+            consecutive_losses=0,
         )
         self.assertLessEqual(
             check.max_loss_rub,
@@ -130,6 +135,16 @@ class RiskTests(unittest.TestCase):
                     "items": [{"type": "OPERATION_TYPE_INPUT"}],
                 },
             )
+
+    def test_consecutive_loss_counter(self):
+        operations = {
+            "items": [
+                {"type": "OPERATION_TYPE_SELL", "date": "2026-09-19T10:00:00Z", "yield": money("10")},
+                {"type": "OPERATION_TYPE_SELL", "date": "2026-09-19T11:00:00Z", "yield": money("-5")},
+                {"type": "OPERATION_TYPE_SELL", "date": "2026-09-19T12:00:00Z", "yield": money("-7")},
+            ]
+        }
+        self.assertEqual(compute_consecutive_losses(operations), 2)
 
 
 if __name__ == "__main__":
