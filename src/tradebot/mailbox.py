@@ -5,6 +5,7 @@ import imaplib
 import json
 import smtplib
 import ssl
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -87,11 +88,14 @@ def _send_text_email(
     recipient: str,
     subject: str,
     body: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> None:
     msg = EmailMessage()
     msg["From"] = user
     msg["To"] = recipient
     msg["Subject"] = subject
+    for key, value in (extra_headers or {}).items():
+        msg[key] = value
     msg.set_content(body)
 
     context = ssl.create_default_context()
@@ -108,6 +112,7 @@ def send_signal_email(
     recipient: str,
     signal_id: str,
     json_body: str,
+    instrument_uid: str | None = None,
 ) -> None:
     _send_text_email(
         smtp_host=smtp_host,
@@ -120,6 +125,14 @@ def send_signal_email(
             "Для ответа сохраните неизменяемые поля протокола.\n\n"
             + json_body
         ),
+        extra_headers={
+            "X-Trade-Sent-At": datetime.now(timezone.utc).isoformat(),
+            **(
+                {"X-Trade-Instrument-Uid": instrument_uid}
+                if instrument_uid
+                else {}
+            ),
+        },
     )
 
 
@@ -163,6 +176,89 @@ def send_daily_data_email(
         body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
     )
 
+
+
+def _select_special_mailbox(
+    client: imaplib.IMAP4_SSL,
+    special_flag: str,
+) -> None:
+    status, boxes = client.list()
+    if status != "OK":
+        raise RuntimeError("IMAP mailbox listing failed")
+    wanted = special_flag.lower()
+    for raw in boxes or []:
+        text = raw.decode("utf-8", errors="replace")
+        if wanted not in text.lower():
+            continue
+        # Keep the mailbox token exactly as returned by IMAP. It is usually
+        # quoted (for example "[Gmail]/Sent Mail") and may contain spaces.
+        marker = ") "
+        pos = text.find(marker)
+        if pos < 0:
+            continue
+        rest = text[pos + len(marker):].strip()
+        # Drop the hierarchy delimiter (usually "/") and retain the name.
+        if rest.startswith('"'):
+            end = rest.find('"', 1)
+            if end >= 0:
+                rest = rest[end + 1 :].strip()
+        mailbox = rest
+        if not mailbox:
+            continue
+        selected, _ = client.select(mailbox, readonly=True)
+        if selected == "OK":
+            return
+    raise RuntimeError(f"IMAP special mailbox not found: {special_flag}")
+
+
+def has_recent_signal_for_instrument(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+    instrument_uid: str,
+    within_minutes: int,
+) -> bool:
+    if within_minutes <= 0:
+        return False
+
+    client = imaplib.IMAP4_SSL(imap_host, 993)
+    client.login(user, app_password)
+    try:
+        _select_special_mailbox(client, "\\Sent")
+        status, data = client.search(
+            None,
+            f'(HEADER X-Trade-Instrument-Uid "{instrument_uid}")',
+        )
+        if status != "OK":
+            raise RuntimeError("IMAP recent signal search failed")
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=within_minutes)
+        for msg_id in reversed(data[0].split()):
+            status, fetched = client.fetch(
+                msg_id,
+                "(BODY.PEEK[HEADER.FIELDS (X-Trade-Sent-At)])",
+            )
+            if status != "OK" or not fetched:
+                continue
+            raw = fetched[0][1]
+            msg = email.message_from_bytes(raw)
+            sent_at_raw = str(msg.get("X-Trade-Sent-At") or "").strip()
+            if not sent_at_raw:
+                continue
+            try:
+                sent_at = datetime.fromisoformat(
+                    sent_at_raw.replace("Z", "+00:00")
+                )
+            except ValueError:
+                continue
+            if sent_at.tzinfo is None:
+                continue
+            if sent_at.astimezone(timezone.utc) >= cutoff:
+                return True
+        return False
+    finally:
+        client.logout()
 
 def _imap_has_exact_subject_from(
     *,
