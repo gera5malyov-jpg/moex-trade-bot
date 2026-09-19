@@ -42,7 +42,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
 
     client = TInvestSandboxClient(
         token=config.tinvest_token,
-        account_id=config.sandbox_account_id,
+        account_name=config.sandbox_account_name,
     )
     result = client.post_limit_order(
         instrument_id=command.instrument_id,
