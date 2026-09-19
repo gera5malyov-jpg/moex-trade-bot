@@ -1,15 +1,7 @@
 name: Monitor sandbox protective lifecycle
-# one-time live monitor verification
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/monitor-lifecycle.yml"
-  schedule:
-    # Every 5 minutes, weekdays, 06:00–23:55 Moscow (UTC+3).
-    # Broker-side STOP/TAKE orders remain active between monitor runs.
-    - cron: "*/5 3-20 * * 1-5"
 
 permissions:
   contents: read
