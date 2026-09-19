@@ -227,6 +227,7 @@ def main():
                 preflight_order_price=prepared["preflight_order_price"],
                 instrument_lot=int(prepared["instrument"].get("lot") or 0),
                 min_price_increment=tick,
+                market_spread_per_unit=(best_ask - q(bids[0].get("price"))),
                 daily_pnl_rub=daily_pnl,
                 consecutive_losses=consecutive_losses,
             )
