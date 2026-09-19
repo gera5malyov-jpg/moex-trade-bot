@@ -78,10 +78,37 @@ def _validate_executable_instrument(
         raise RuntimeError(
             "Execution refused: instrument is not confirmed REAL_EXCHANGE_MOEX"
         )
-    if instrument.get("apiTradeAvailableFlag") is False:
+    if instrument.get("apiTradeAvailableFlag") is not True:
         raise RuntimeError("Execution refused: API trading is unavailable")
-    if command.action == "BUY" and instrument.get("buyAvailableFlag") is False:
+    if command.action == "BUY" and instrument.get("buyAvailableFlag") is not True:
         raise RuntimeError("Execution refused: BUY is unavailable")
+    if instrument.get("liquidityFlag") is not True:
+        raise RuntimeError("Execution refused: instrument liquidity flag is not true")
+    if instrument.get("blockedTcaFlag") is True:
+        raise RuntimeError("Execution refused: instrument is TCA-blocked")
+    if instrument.get("forQualInvestorFlag") is True:
+        raise RuntimeError("Execution refused: qualified-only instrument")
+    required_tests = (
+        instrument.get("requiredTests")
+        or instrument.get("required_tests")
+        or []
+    )
+    if required_tests:
+        raise RuntimeError("Execution refused: investor tests are required")
+    actual_type = str(
+        instrument.get("instrumentType")
+        or instrument.get("instrument_type")
+        or ""
+    ).lower()
+    if actual_type != command.instrument_type:
+        raise RuntimeError(
+            "Execution refused: resolved instrument type mismatch"
+        )
+    currency = str(instrument.get("currency") or "").lower()
+    if currency != "rub":
+        raise RuntimeError(
+            "Execution refused: automatic share/ETF execution is RUB-only"
+        )
 
     tick = _quotation_decimal(
         instrument.get("minPriceIncrement")
@@ -106,6 +133,65 @@ def _validate_executable_instrument(
             tick=tick,
             field="take_profit",
         )
+
+
+def _live_execution_market(
+    *,
+    client: TInvestSandboxClient,
+    instrument_uid: str,
+    limit_price: Decimal,
+    quantity_lots: int,
+) -> Decimal:
+    book = client.get_order_book(instrument_uid, depth=10)
+    bids = book.get("bids") or []
+    asks = book.get("asks") or []
+    if not bids or not asks:
+        raise RuntimeError("Execution refused: live order book is empty")
+
+    best_bid = _quotation_decimal(bids[0].get("price"), "best bid")
+    best_ask = _quotation_decimal(asks[0].get("price"), "best ask")
+    if best_ask < best_bid:
+        raise RuntimeError("Execution refused: crossed/invalid order book")
+
+    orderbook_ts = str(
+        book.get("orderbookTs")
+        or book.get("orderbook_ts")
+        or ""
+    )
+    if not orderbook_ts:
+        raise RuntimeError("Execution refused: order book timestamp unavailable")
+    ts = parse_iso_utc(orderbook_ts)
+    age_seconds = (utc_now() - ts).total_seconds()
+    if age_seconds < -5 or age_seconds > 120:
+        raise RuntimeError("Execution refused: order book is stale")
+
+    if best_ask > limit_price:
+        raise RuntimeError(
+            "Execution refused: current best ask is above limit_price"
+        )
+
+    executable_depth = 0
+    for ask in asks:
+        price_raw = ask.get("price")
+        try:
+            price = _quotation_decimal(price_raw, "ask price")
+        except RuntimeError:
+            continue
+        if price > limit_price:
+            continue
+        try:
+            executable_depth += int(ask.get("quantity") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    minimum_depth = max(quantity_lots * 5, quantity_lots)
+    if executable_depth < minimum_depth:
+        raise RuntimeError(
+            "Execution refused: insufficient executable ask depth "
+            f"({executable_depth} < {minimum_depth} lots)"
+        )
+
+    return best_ask - best_bid
 
 
 def _validate_live_trading_status(
@@ -315,6 +401,12 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         client=client,
         instrument_uid=command.instrument_uid,
     )
+    live_spread = _live_execution_market(
+        client=client,
+        instrument_uid=command.instrument_uid,
+        limit_price=command.limit_price,
+        quantity_lots=command.quantity_lots,
+    )
 
     hard_risk = None
     if command.action == "BUY":
@@ -373,6 +465,7 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
                 or prepared["instrument"].get("min_price_increment"),
                 "min price increment",
             ),
+            market_spread_per_unit=live_spread,
             daily_pnl_rub=daily_pnl,
             consecutive_losses=consecutive_losses,
         )
