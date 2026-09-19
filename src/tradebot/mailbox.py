@@ -316,6 +316,22 @@ def _imap_has_exact_subject_from(
         client.logout()
 
 
+def has_risk_baseline(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+    trading_date: str,
+) -> bool:
+    return _imap_has_exact_subject_from(
+        imap_host=imap_host,
+        user=user,
+        app_password=app_password,
+        subject=f"[TRADE-RISK-BASELINE] {trading_date}",
+        allowed_from=user,
+    )
+
+
 def load_risk_baseline(
     *,
     imap_host: str,
