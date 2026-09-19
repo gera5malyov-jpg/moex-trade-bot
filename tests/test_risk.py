@@ -19,6 +19,16 @@ def money(value: str):
 
 
 class RiskTests(unittest.TestCase):
+    def common_risk_kwargs(self):
+        return {
+            "weekly_pnl_rub": Decimal("0"),
+            "monthly_pnl_rub": Decimal("0"),
+            "week_start_equity_rub": Decimal("1000000"),
+            "month_start_equity_rub": Decimal("1000000"),
+            "high_water_mark_rub": Decimal("1000000"),
+            "consecutive_losses": 0,
+        }
+
     def command(self):
         now = datetime.now(timezone.utc)
         return TradeCommand.from_dict(
@@ -261,6 +271,104 @@ class RiskTests(unittest.TestCase):
             compute_consecutive_losses_from_lifecycle(
                 states,
                 since_utc="2026-09-19T03:00:00+00:00",
+            )
+
+    def test_rejects_weekly_stop(self):
+        kwargs = self.common_risk_kwargs()
+        kwargs["weekly_pnl_rub"] = Decimal("-20000")
+        with self.assertRaises(RuntimeError):
+            validate_buy_hard_risk(
+                command=self.command(),
+                portfolio={
+                    "totalAmountPortfolio": money("1000000"),
+                    "dailyYield": money("0"),
+                    "positions": [],
+                },
+                preflight_order_price={
+                    "initialOrderAmount": money("3000"),
+                    "totalOrderAmount": money("3001.5"),
+                    "executedCommissionRub": money("1.5"),
+                },
+                instrument_lot=10,
+                min_price_increment=Decimal("0.01"),
+                market_spread_per_unit=Decimal("0.10"),
+                **kwargs,
+            )
+
+    def test_rejects_monthly_stop(self):
+        kwargs = self.common_risk_kwargs()
+        kwargs["monthly_pnl_rub"] = Decimal("-40000")
+        with self.assertRaises(RuntimeError):
+            validate_buy_hard_risk(
+                command=self.command(),
+                portfolio={
+                    "totalAmountPortfolio": money("1000000"),
+                    "dailyYield": money("0"),
+                    "positions": [],
+                },
+                preflight_order_price={
+                    "initialOrderAmount": money("3000"),
+                    "totalOrderAmount": money("3001.5"),
+                    "executedCommissionRub": money("1.5"),
+                },
+                instrument_lot=10,
+                min_price_increment=Decimal("0.01"),
+                market_spread_per_unit=Decimal("0.10"),
+                **kwargs,
+            )
+
+    def test_drawdown_over_three_percent_halves_risk_budget(self):
+        kwargs = self.common_risk_kwargs()
+        kwargs["high_water_mark_rub"] = Decimal("1000000")
+        check = validate_buy_hard_risk(
+            command=self.command(),
+            portfolio={
+                "totalAmountPortfolio": money("950000"),
+                "dailyYield": money("0"),
+                "positions": [],
+            },
+            preflight_order_price={
+                "initialOrderAmount": money("3000"),
+                "totalOrderAmount": money("3001.5"),
+                "executedCommissionRub": money("1.5"),
+            },
+            instrument_lot=10,
+            min_price_increment=Decimal("0.01"),
+            market_spread_per_unit=Decimal("0.10"),
+            **kwargs,
+        )
+        self.assertEqual(
+            check.risk_budget_multiplier,
+            Decimal("0.5"),
+        )
+        self.assertEqual(
+            check.risk_budget_rub,
+            Decimal("1187.50000"),
+        )
+
+    def test_two_loss_cooldown_blocks_for_two_hours(self):
+        now = datetime.now(timezone.utc)
+        kwargs = self.common_risk_kwargs()
+        kwargs["consecutive_losses"] = 2
+        kwargs["last_strategy_close_at"] = now - timedelta(hours=1)
+        kwargs["now"] = now
+        with self.assertRaises(RuntimeError):
+            validate_buy_hard_risk(
+                command=self.command(),
+                portfolio={
+                    "totalAmountPortfolio": money("1000000"),
+                    "dailyYield": money("0"),
+                    "positions": [],
+                },
+                preflight_order_price={
+                    "initialOrderAmount": money("3000"),
+                    "totalOrderAmount": money("3001.5"),
+                    "executedCommissionRub": money("1.5"),
+                },
+                instrument_lot=10,
+                min_price_increment=Decimal("0.01"),
+                market_spread_per_unit=Decimal("0.10"),
+                **kwargs,
             )
 
     def test_consecutive_loss_counter(self):
