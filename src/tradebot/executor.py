@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from .config import Config
+from .mailbox import load_risk_baseline
 from .protocol import (
     PROTOCOL_VERSION,
     TradeCommand,
@@ -10,7 +12,7 @@ from .protocol import (
     utc_now,
     verify_auth_token,
 )
-from .risk import validate_buy_hard_risk
+from .risk import compute_daily_pnl_rub, validate_buy_hard_risk
 from .tinvest import TInvestSandboxClient
 
 
@@ -113,11 +115,36 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
     hard_risk = None
     if command.action == "BUY":
         lot = int(prepared["instrument"].get("lot") or 0)
+
+        now = utc_now()
+        trading_date = now.astimezone(
+            ZoneInfo("Europe/Moscow")
+        ).date().isoformat()
+        baseline = load_risk_baseline(
+            imap_host=config.imap_host,
+            user=config.mail_user,
+            app_password=config.mail_app_password,
+            trading_date=trading_date,
+        )
+        baseline_time = parse_iso_utc(
+            str(baseline.get("generated_at_utc") or "")
+        )
+        operations = client.get_operations_by_cursor(
+            from_time=baseline_time,
+            to_time=now,
+        )
+        daily_pnl = compute_daily_pnl_rub(
+            current_portfolio=prepared["portfolio"],
+            baseline_payload=baseline,
+            operations_since_baseline=operations,
+        )
+
         hard_risk = validate_buy_hard_risk(
             command=command,
             portfolio=prepared["portfolio"],
             preflight_order_price=prepared["preflight_order_price"],
             instrument_lot=lot,
+            daily_pnl_rub=daily_pnl,
         )
 
     result = client.post_limit_order(
