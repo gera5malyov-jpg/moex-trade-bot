@@ -210,6 +210,7 @@ def main():
                 portfolio=prepared["portfolio"],
                 preflight_order_price=prepared["preflight_order_price"],
                 instrument_lot=int(prepared["instrument"].get("lot") or 0),
+                min_price_increment=tick,
                 daily_pnl_rub=daily_pnl,
                 consecutive_losses=consecutive_losses,
             )
