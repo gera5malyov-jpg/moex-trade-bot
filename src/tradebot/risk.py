@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from .protocol import TradeCommand
+from .protocol import TradeCommand, parse_iso_utc
 
 
 RISK_PER_TRADE = Decimal("0.0025")
@@ -68,6 +68,50 @@ def _positive_position_count(portfolio: dict) -> int:
     return count
 
 
+
+def compute_daily_pnl_rub(
+    *,
+    current_portfolio: dict,
+    baseline_payload: dict,
+    operations_since_baseline: dict,
+) -> Decimal:
+    if baseline_payload.get("environment") != "TINVEST_SANDBOX":
+        raise RuntimeError("Hard risk: baseline environment mismatch")
+
+    generated_at = str(baseline_payload.get("generated_at_utc") or "")
+    if not generated_at:
+        raise RuntimeError("Hard risk: baseline timestamp is unavailable")
+    parse_iso_utc(generated_at)
+
+    baseline_portfolio = baseline_payload.get("portfolio")
+    if not isinstance(baseline_portfolio, dict):
+        raise RuntimeError("Hard risk: baseline portfolio is unavailable")
+
+    baseline_equity = _require_money(
+        baseline_portfolio,
+        ("totalAmountPortfolio", "total_amount_portfolio"),
+        "baseline portfolio capital",
+    )
+    current_equity = _require_money(
+        current_portfolio,
+        ("totalAmountPortfolio", "total_amount_portfolio"),
+        "current portfolio capital",
+    )
+
+    items = (
+        operations_since_baseline.get("items")
+        or operations_since_baseline.get("operations")
+        or []
+    )
+    for operation in items:
+        op_type = str(operation.get("type") or "").upper()
+        if op_type in {"OPERATION_TYPE_INPUT", "OPERATION_TYPE_OUTPUT"}:
+            raise RuntimeError(
+                "Hard risk: account funding/withdrawal after daily baseline"
+            )
+
+    return current_equity - baseline_equity
+
 @dataclass(frozen=True)
 class RiskCheck:
     capital_rub: Decimal
@@ -85,6 +129,7 @@ def validate_buy_hard_risk(
     portfolio: dict,
     preflight_order_price: dict,
     instrument_lot: int,
+    daily_pnl_rub: Decimal | None = None,
 ) -> RiskCheck:
     if command.action != "BUY":
         raise ValueError("Hard-risk BUY validator requires BUY command")
@@ -101,13 +146,16 @@ def validate_buy_hard_risk(
     if capital <= 0:
         raise RuntimeError("Hard risk: portfolio capital must be positive")
 
-    # Fail closed. T-Invest Sandbox may omit dailyYield, so BUY must stay
-    # blocked until we have a durable independently computed daily P&L.
-    daily_yield = _require_money(
-        portfolio,
-        ("dailyYield", "daily_yield"),
-        "daily P&L",
-    )
+    # Prefer the independently computed baseline-to-current equity P&L.
+    # Fall back to broker dailyYield only when it is actually present.
+    if daily_pnl_rub is None:
+        daily_yield = _require_money(
+            portfolio,
+            ("dailyYield", "daily_yield"),
+            "daily P&L",
+        )
+    else:
+        daily_yield = Decimal(daily_pnl_rub)
     if daily_yield <= -(capital * DAILY_STOP):
         raise RuntimeError("Hard risk: daily loss limit reached")
 
