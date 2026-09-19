@@ -11,6 +11,7 @@ RISK_PER_TRADE = Decimal("0.0025")
 DAILY_STOP = Decimal("0.0075")
 MAX_POSITION_SHARE = Decimal("0.10")
 MAX_OPEN_POSITIONS = 2
+MIN_NET_RISK_REWARD = Decimal("2.0")
 
 
 def _decimal_parts(value: Any) -> Decimal:
@@ -151,6 +152,9 @@ class RiskCheck:
     risk_budget_rub: Decimal
     position_cap_rub: Decimal
     open_positions: int
+    net_risk_rub: Decimal
+    net_reward_rub: Decimal
+    risk_reward_net: Decimal
 
 
 def validate_buy_hard_risk(
@@ -159,6 +163,7 @@ def validate_buy_hard_risk(
     portfolio: dict,
     preflight_order_price: dict,
     instrument_lot: int,
+    min_price_increment: Decimal,
     daily_pnl_rub: Decimal | None = None,
     consecutive_losses: int | None = None,
 ) -> RiskCheck:
@@ -168,6 +173,10 @@ def validate_buy_hard_risk(
         raise ValueError("BUY requires limit_price and stop_loss")
     if instrument_lot <= 0:
         raise ValueError("Instrument lot must be positive")
+    if not min_price_increment.is_finite() or min_price_increment <= 0:
+        raise ValueError("min_price_increment must be finite and positive")
+    if command.take_profit is None:
+        raise ValueError("BUY requires take_profit")
 
     capital = _require_money(
         portfolio,
@@ -234,7 +243,35 @@ def validate_buy_hard_risk(
     if price_risk <= 0:
         raise RuntimeError("Hard risk: invalid stop distance")
 
-    max_loss = price_risk + estimated_round_trip_commission
+    # Code-level minimum slippage reserve: one tick on entry and one
+    # tick on exit. The reviewer may use a larger estimate; this is only the
+    # hard floor that prevents an optimistic zero-slippage BUY.
+    min_round_trip_slippage = (
+        min_price_increment * units * Decimal("2")
+    )
+    net_risk = (
+        price_risk
+        + estimated_round_trip_commission
+        + min_round_trip_slippage
+    )
+    gross_reward = (
+        command.take_profit - command.limit_price
+    ) * units
+    net_reward = (
+        gross_reward
+        - estimated_round_trip_commission
+        - min_round_trip_slippage
+    )
+    if net_reward <= 0:
+        raise RuntimeError("Hard risk: net reward is not positive")
+
+    risk_reward_net = net_reward / net_risk
+    if risk_reward_net < MIN_NET_RISK_REWARD:
+        raise RuntimeError(
+            "Hard risk: net risk/reward below 2.0"
+        )
+
+    max_loss = net_risk
     risk_budget = capital * RISK_PER_TRADE
     if max_loss > risk_budget:
         raise RuntimeError("Hard risk: max loss exceeds 0.25% of capital")
@@ -247,4 +284,7 @@ def validate_buy_hard_risk(
         risk_budget_rub=risk_budget,
         position_cap_rub=position_cap,
         open_positions=open_positions,
+        net_risk_rub=net_risk,
+        net_reward_rub=net_reward,
+        risk_reward_net=risk_reward_net,
     )
