@@ -9,6 +9,7 @@ from tradebot.config import Config
 from tradebot.lifecycle import FINAL_STATUSES, monitor_lifecycle_state, open_protected_long
 from tradebot.mailbox import (
     has_sandbox_ready_marker,
+    load_latest_lifecycle_states,
     load_risk_baseline,
     send_lifecycle_state_email,
     send_sandbox_ready_email,
@@ -21,7 +22,7 @@ from tradebot.protocol import (
     parse_iso_utc,
 )
 from tradebot.risk import (
-    compute_consecutive_losses,
+    compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
     validate_buy_hard_risk,
 )
@@ -151,7 +152,17 @@ def main():
         baseline_payload=baseline,
         operations_since_baseline=operations,
     )
-    consecutive_losses = compute_consecutive_losses(operations)
+    lifecycle_states = load_latest_lifecycle_states(
+        imap_host=cfg.imap_host,
+        user=cfg.mail_user,
+        app_password=cfg.mail_app_password,
+        hmac_secret=cfg.hmac_secret,
+        expected_account_id=client.account_id,
+    )
+    consecutive_losses = compute_consecutive_losses_from_lifecycle(
+        lifecycle_states,
+        since_utc=str(baseline["generated_at_utc"]),
+    )
 
     instrument = client.find_instrument("SBER_TQBR")
     if str(instrument.get("realExchange") or "") != "REAL_EXCHANGE_MOEX":
