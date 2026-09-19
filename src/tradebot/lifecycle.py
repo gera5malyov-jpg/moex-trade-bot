@@ -104,6 +104,127 @@ def _cancel_all_known_protection(
     _cancel_if_present(client, str(state.get("take_order_id") or ""))
 
 
+def _known_protection_items(
+    client: TInvestSandboxClient,
+    state: dict[str, Any],
+    *,
+    status: str = "STOP_ORDER_STATUS_ALL",
+) -> dict[str, dict[str, Any] | None]:
+    orders = client.get_stop_orders(status=status)
+    result: dict[str, dict[str, Any] | None] = {}
+    for role, key in (
+        ("STOP_LOSS", "stop_order_id"),
+        ("TAKE_PROFIT", "take_order_id"),
+    ):
+        stop_id = str(state.get(key) or "")
+        if not stop_id:
+            result[role] = None
+            continue
+        match = None
+        for item in orders:
+            if _stop_order_id(item) == stop_id:
+                match = item
+                break
+        result[role] = match
+    return result
+
+
+def _cancel_verified_or_wait(
+    *,
+    client: TInvestSandboxClient,
+    state: dict[str, Any],
+    reason: str,
+    closed_status: str,
+) -> dict[str, Any]:
+    _cancel_all_known_protection(client, state)
+
+    active_items = _known_protection_items(
+        client,
+        state,
+        status="STOP_ORDER_STATUS_ACTIVE",
+    )
+    still_active = [
+        role
+        for role, item in active_items.items()
+        if item is not None
+    ]
+    if still_active:
+        out = dict(state)
+        out.update(
+            {
+                "status": "PROTECTION_CANCEL_PENDING",
+                "close_reason": reason,
+                "pending_closed_status": closed_status,
+                "cancel_pending_roles": still_active,
+                "updated_at": utc_now().isoformat(),
+            }
+        )
+        return out
+
+    all_items = _known_protection_items(client, state)
+    pending_children: list[dict[str, str]] = []
+    missing_ids: list[str] = []
+    for role, key in (
+        ("STOP_LOSS", "stop_order_id"),
+        ("TAKE_PROFIT", "take_order_id"),
+    ):
+        stop_id = str(state.get(key) or "")
+        if not stop_id:
+            continue
+        item = all_items.get(role)
+        if item is None:
+            missing_ids.append(stop_id)
+            continue
+        if _triggered(item):
+            pending_children.append(
+                {
+                    "role": role,
+                    "stop_order_id": stop_id,
+                    "exchange_order_id": _exchange_order_id(item),
+                }
+            )
+
+    if pending_children:
+        derived_closed_status = closed_status
+        if len(pending_children) == 1:
+            role = pending_children[0]["role"]
+            if role == "STOP_LOSS":
+                derived_closed_status = "CLOSED_STOP_LOSS"
+            elif role == "TAKE_PROFIT":
+                derived_closed_status = "CLOSED_TAKE_PROFIT"
+        out = dict(state)
+        out.update(
+            {
+                "status": "PROTECTIVE_CHILD_PENDING",
+                "close_reason": reason,
+                "pending_closed_status": derived_closed_status,
+                "pending_children": pending_children,
+                "updated_at": utc_now().isoformat(),
+            }
+        )
+        return out
+
+    if missing_ids:
+        out = dict(state)
+        out.update(
+            {
+                "status": "PROTECTION_CANCEL_PENDING",
+                "close_reason": reason,
+                "pending_closed_status": closed_status,
+                "cancel_pending_missing_ids": missing_ids,
+                "updated_at": utc_now().isoformat(),
+            }
+        )
+        return out
+
+    return _force_exit_remaining(
+        client=client,
+        state=state,
+        reason=reason,
+        closed_status=closed_status,
+    )
+
+
 def _force_exit_remaining(
     *,
     client: TInvestSandboxClient,
@@ -279,8 +400,6 @@ def open_protected_long(
         )
         return state
     except Exception as exc:
-        _cancel_if_present(client, stop_id)
-        _cancel_if_present(client, take_id)
         state.update(
             {
                 "status": "PROTECTION_SETUP_FAILED",
@@ -289,7 +408,7 @@ def open_protected_long(
                 "protection_error": f"{type(exc).__name__}: {exc}",
             }
         )
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason="PROTECTION_SETUP_FAILED",
@@ -349,14 +468,98 @@ def monitor_lifecycle_state(
         )
         return out
 
-    if current_status == "FORCE_EXIT_PENDING":
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+    if current_status in {
+        "FORCE_EXIT_PENDING",
+        "PROTECTION_CANCEL_PENDING",
+    }:
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason=str(state.get("close_reason") or "FORCE_EXIT_RETRY"),
             closed_status=str(
                 state.get("pending_closed_status") or "CLOSED_FORCE_EXIT"
+            ),
+        )
+
+    if current_status == "PROTECTIVE_CHILD_PENDING":
+        children = state.get("pending_children") or []
+        if not children:
+            out = dict(state)
+            out.update(
+                {
+                    "updated_at": now.isoformat(),
+                    "child_wait_error": "missing pending_children",
+                }
+            )
+            return out
+
+        child_statuses: list[dict[str, str]] = []
+        for child_info in children:
+            child_id = str(child_info.get("exchange_order_id") or "")
+            if not child_id:
+                out = dict(state)
+                out.update(
+                    {
+                        "updated_at": now.isoformat(),
+                        "child_wait_error": (
+                            "triggered stop has no exchange_order_id"
+                        ),
+                    }
+                )
+                return out
+            child = client.get_order_state(child_id)
+            child_statuses.append(
+                {
+                    "exchange_order_id": child_id,
+                    "status": _status(child),
+                }
+            )
+
+        terminal = {
+            "EXECUTION_REPORT_STATUS_FILL",
+            "EXECUTION_REPORT_STATUS_REJECTED",
+            "EXECUTION_REPORT_STATUS_CANCELLED",
+        }
+        if any(
+            item["status"] not in terminal
+            for item in child_statuses
+        ):
+            out = dict(state)
+            out.update(
+                {
+                    "updated_at": now.isoformat(),
+                    "pending_child_statuses": child_statuses,
+                    "remaining_lots": position_lots,
+                }
+            )
+            return out
+
+        active_items = _known_protection_items(
+            client,
+            state,
+            status="STOP_ORDER_STATUS_ACTIVE",
+        )
+        if any(item is not None for item in active_items.values()):
+            out = dict(state)
+            out.update(
+                {
+                    "status": "PROTECTION_CANCEL_PENDING",
+                    "updated_at": now.isoformat(),
+                    "pending_child_statuses": child_statuses,
+                }
+            )
+            return out
+
+        return _force_exit_remaining(
+            client=client,
+            state=state,
+            reason=str(
+                state.get("close_reason")
+                or "PROTECTIVE_CHILD_TERMINAL_WITH_REMAINDER"
+            ),
+            closed_status=str(
+                state.get("pending_closed_status")
+                or "CLOSED_FORCE_EXIT"
             ),
         )
 
@@ -394,8 +597,7 @@ def monitor_lifecycle_state(
             "EXECUTION_REPORT_STATUS_REJECTED",
             "EXECUTION_REPORT_STATUS_CANCELLED",
         }:
-            _cancel_all_known_protection(client, state)
-            return _force_exit_remaining(
+            return _cancel_verified_or_wait(
                 client=client,
                 state=state,
                 reason=f"PROTECTIVE_CHILD_{child_status}",
@@ -416,8 +618,7 @@ def monitor_lifecycle_state(
         return out
 
     if current_status not in {"PROTECTED", "PROTECTION_SETUP_FAILED"}:
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason=f"UNEXPECTED_LIFECYCLE_STATE_{current_status}",
@@ -426,8 +627,7 @@ def monitor_lifecycle_state(
 
     time_stop = parse_iso_utc(str(state["time_stop"]))
     if now >= time_stop:
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason="TIME_STOP",
@@ -445,8 +645,7 @@ def monitor_lifecycle_state(
     )
 
     if stop_item is None or take_item is None:
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason="PROTECTIVE_ORDER_MISSING",
@@ -465,8 +664,7 @@ def monitor_lifecycle_state(
             str(stop_item.get("status") or "").upper() in bad_statuses
             or str(take_item.get("status") or "").upper() in bad_statuses
         ):
-            _cancel_all_known_protection(client, state)
-            return _force_exit_remaining(
+            return _cancel_verified_or_wait(
                 client=client,
                 state=state,
                 reason="PROTECTIVE_ORDER_INACTIVE",
@@ -478,8 +676,7 @@ def monitor_lifecycle_state(
         return state
 
     if stop_triggered and take_triggered:
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason="BOTH_PROTECTIVE_ORDERS_TRIGGERED",
@@ -500,12 +697,25 @@ def monitor_lifecycle_state(
     _cancel_if_present(client, sibling_id)
     child_id = _exchange_order_id(triggered or {})
     if not child_id:
-        return _force_exit_remaining(
-            client=client,
-            state=state,
-            reason=f"{trigger_name}_TRIGGERED_WITHOUT_CHILD",
-            closed_status=closed_status,
+        out = dict(state)
+        out.update(
+            {
+                "status": "PROTECTIVE_CHILD_PENDING",
+                "close_reason": (
+                    f"{trigger_name}_TRIGGERED_WITHOUT_CHILD"
+                ),
+                "pending_closed_status": closed_status,
+                "pending_children": [
+                    {
+                        "role": trigger_name,
+                        "stop_order_id": _stop_order_id(triggered or {}),
+                        "exchange_order_id": "",
+                    }
+                ],
+                "updated_at": now.isoformat(),
+            }
         )
+        return out
 
     child = client.get_order_state(child_id)
     child_status = _status(child)
@@ -528,8 +738,7 @@ def monitor_lifecycle_state(
         "EXECUTION_REPORT_STATUS_REJECTED",
         "EXECUTION_REPORT_STATUS_CANCELLED",
     }:
-        _cancel_all_known_protection(client, state)
-        return _force_exit_remaining(
+        return _cancel_verified_or_wait(
             client=client,
             state=state,
             reason=f"{trigger_name}_{child_status}",
