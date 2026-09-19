@@ -199,16 +199,21 @@ class TInvestSandboxClient:
         if not query:
             raise ValueError("Instrument query is empty")
 
+        query_upper = query.upper()
+        search_query = query
+        if "_" in query_upper:
+            ticker, _class_code = query_upper.rsplit("_", 1)
+            search_query = ticker
+
         url = self.INSTRUMENTS_SERVICE + "/FindInstrument"
         data = self._post(
             url,
-            {"query": query, "apiTradeAvailableFlag": True},
+            {"query": search_query, "apiTradeAvailableFlag": True},
         )
         instruments = data.get("instruments") or []
         if not instruments:
             raise RuntimeError(f"Instrument not found or not API-tradable: {query}")
 
-        query_upper = query.upper()
         exact_uid = [
             x
             for x in instruments
