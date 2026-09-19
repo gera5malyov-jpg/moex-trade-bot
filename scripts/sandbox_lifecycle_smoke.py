@@ -24,6 +24,8 @@ from tradebot.protocol import (
 from tradebot.risk import (
     compute_consecutive_losses_from_lifecycle,
     compute_daily_pnl_rub,
+    compute_period_pnl_rub,
+    latest_strategy_close_time,
     validate_buy_hard_risk,
 )
 from tradebot.tinvest import TInvestSandboxClient
@@ -95,6 +97,15 @@ def build_command(
             "take_profit": str(take),
             "time_stop": (now + timedelta(minutes=20)).isoformat(),
             "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "probability_success_percent": None,
+            "expected_value_rub": None,
+            "market_regime": "UNKNOWN",
+            "counter_argument": "SMOKE_TEST_NOT_A_STRATEGY_ENTRY",
+            "why_counter_argument_does_not_invalidate": (
+                "Lifecycle verification only; excluded from strategy PnL streak."
+            ),
+            "benchmark_check": "INSUFFICIENT_HISTORY",
+            "data_completeness": "FULL",
             "reviewer_note": "SANDBOX_LIFECYCLE_SMOKE_TEST",
         }
     )
@@ -152,6 +163,36 @@ def main():
         baseline_payload=baseline,
         operations_since_baseline=operations,
     )
+    week_start_time = parse_iso_utc(
+        str(baseline.get("week_start_generated_at_utc") or "")
+    )
+    month_start_time = parse_iso_utc(
+        str(baseline.get("month_start_generated_at_utc") or "")
+    )
+    week_operations = client.get_operations_by_cursor(
+        from_time=week_start_time,
+        to_time=now,
+    )
+    month_operations = client.get_operations_by_cursor(
+        from_time=month_start_time,
+        to_time=now,
+    )
+    weekly_pnl = compute_period_pnl_rub(
+        current_portfolio=portfolio,
+        start_equity_rub=Decimal(
+            str(baseline.get("week_start_equity_rub"))
+        ),
+        operations_since_start=week_operations,
+        period_name="week",
+    )
+    monthly_pnl = compute_period_pnl_rub(
+        current_portfolio=portfolio,
+        start_equity_rub=Decimal(
+            str(baseline.get("month_start_equity_rub"))
+        ),
+        operations_since_start=month_operations,
+        period_name="month",
+    )
     lifecycle_states = load_latest_lifecycle_states(
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
@@ -160,6 +201,10 @@ def main():
         expected_account_id=client.account_id,
     )
     consecutive_losses = compute_consecutive_losses_from_lifecycle(
+        lifecycle_states,
+        since_utc=str(baseline["generated_at_utc"]),
+    )
+    last_close_at = latest_strategy_close_time(
         lifecycle_states,
         since_utc=str(baseline["generated_at_utc"]),
     )
@@ -229,7 +274,20 @@ def main():
                 min_price_increment=tick,
                 market_spread_per_unit=(best_ask - q(bids[0].get("price"))),
                 daily_pnl_rub=daily_pnl,
+                weekly_pnl_rub=weekly_pnl,
+                monthly_pnl_rub=monthly_pnl,
+                week_start_equity_rub=Decimal(
+                    str(baseline.get("week_start_equity_rub"))
+                ),
+                month_start_equity_rub=Decimal(
+                    str(baseline.get("month_start_equity_rub"))
+                ),
+                high_water_mark_rub=Decimal(
+                    str(baseline.get("high_water_mark_rub"))
+                ),
                 consecutive_losses=consecutive_losses,
+                last_strategy_close_at=last_close_at,
+                now=now,
             )
 
             state = open_protected_long(
