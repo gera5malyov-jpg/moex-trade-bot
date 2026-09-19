@@ -107,20 +107,21 @@ def main():
         print(f"Smoke test not scheduled for {moscow_date}; expected {SMOKE_DATE}")
         return
 
+    client = TInvestSandboxClient(
+        token=cfg.tinvest_token,
+        account_name=cfg.sandbox_account_name,
+    )
+
     if has_sandbox_ready_marker(
         imap_host=cfg.imap_host,
         user=cfg.mail_user,
         app_password=cfg.mail_app_password,
         hmac_secret=cfg.hmac_secret,
         expected_account_name=cfg.sandbox_account_name,
+        expected_account_id=client.account_id,
     ):
         print("Sandbox readiness marker already exists; smoke test skipped")
         return
-
-    client = TInvestSandboxClient(
-        token=cfg.tinvest_token,
-        account_name=cfg.sandbox_account_name,
-    )
 
     portfolio = client.get_portfolio()
     if non_cash_positions(portfolio):
@@ -135,6 +136,7 @@ def main():
         trading_date=moscow_date,
         hmac_secret=cfg.hmac_secret,
         expected_account_name=cfg.sandbox_account_name,
+        expected_account_id=client.account_id,
     )
     baseline_time = parse_iso_utc(
         str(baseline.get("generated_at_utc") or "")
@@ -307,6 +309,7 @@ def main():
         "environment": "TINVEST_SANDBOX",
         "verified_at_utc": verified_at_utc,
         "sandbox_account_name": cfg.sandbox_account_name,
+        "sandbox_account_id": client.account_id,
         "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
         "smoke_date_moscow": moscow_date,
         "instrument": "SBER_TQBR",
@@ -326,6 +329,7 @@ def main():
         cfg.hmac_secret,
         verified_at_utc=verified_at_utc,
         sandbox_account_name=cfg.sandbox_account_name,
+        sandbox_account_id=client.account_id,
         lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
         instrument="SBER_TQBR",
     )
