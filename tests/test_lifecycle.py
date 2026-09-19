@@ -20,6 +20,12 @@ class FakeClient:
         self.hold_cancellation_active = False
         self.child_state = {
             "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
+            "lotsExecuted": "1",
+            "executedOrderPrice": {"units": "297", "nano": 0},
+            "executedCommission": {
+                "units": "1",
+                "nano": 485000000,
+            },
         }
 
     def post_limit_order(self, **kwargs):
@@ -31,6 +37,11 @@ class FakeClient:
                     "orderId": "entry-exchange",
                     "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
                     "lotsExecuted": "1",
+                    "executedOrderPrice": {"units": "300", "nano": 0},
+                    "executedCommission": {
+                        "units": "1",
+                        "nano": 500000000,
+                    },
                 },
             }
         self.position_lots = 0
@@ -40,6 +51,11 @@ class FakeClient:
                 "orderId": "exit-exchange",
                 "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
                 "lotsExecuted": str(kwargs["quantity_lots"]),
+                "executedOrderPrice": {"units": "299", "nano": 0},
+                "executedCommission": {
+                    "units": "1",
+                    "nano": 495000000,
+                },
             },
         }
 
@@ -194,6 +210,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(updated["status"], "CLOSED_STOP_LOSS")
         self.assertEqual(client.position_lots, 0)
         self.assertIn("take-profit-id", client.cancelled)
+        self.assertIsNotNone(updated.get("realized_pnl_rub"))
+        self.assertLess(
+            Decimal(updated["realized_pnl_rub"]),
+            Decimal("0"),
+        )
 
     def test_time_stop_waits_for_verified_cancellation(self):
         past = datetime.now(timezone.utc) - timedelta(minutes=1)
