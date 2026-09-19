@@ -364,7 +364,7 @@ def _force_exit_remaining(
                 "remaining_lots": 0,
             }
         )
-        return out
+        return _finalize_realized_pnl(out)
 
     bid = _best_bid(client, str(state["instrument_uid"]))
     attempt = int(state.get("force_exit_attempts") or 0) + 1
@@ -624,6 +624,7 @@ def monitor_lifecycle_state(
 
         child_statuses: list[dict[str, str]] = []
         refreshed_children: list[dict[str, str]] = []
+        working_state = dict(state)
         all_items = _known_protection_items(client, state)
         for child_info in children:
             role = str(child_info.get("role") or "")
@@ -654,10 +655,21 @@ def monitor_lifecycle_state(
                 )
                 return out
             child = client.get_order_state(child_id)
+            child_status = _status(child)
+            if child_status in {
+                "EXECUTION_REPORT_STATUS_FILL",
+                "EXECUTION_REPORT_STATUS_PARTIALLYFILL",
+            }:
+                working_state = _append_exit_component(
+                    working_state,
+                    payload=child,
+                    source=role or "PROTECTIVE_CHILD",
+                    order_id=child_id,
+                )
             child_statuses.append(
                 {
                     "exchange_order_id": child_id,
-                    "status": _status(child),
+                    "status": child_status,
                 }
             )
 
@@ -699,7 +711,7 @@ def monitor_lifecycle_state(
 
         return _force_exit_remaining(
             client=client,
-            state=state,
+            state=working_state,
             reason=str(
                 state.get("close_reason")
                 or "PROTECTIVE_CHILD_TERMINAL_WITH_REMAINDER"
@@ -726,9 +738,15 @@ def monitor_lifecycle_state(
         child = client.get_order_state(child_id)
         child_status = _status(child)
         if child_status == "EXECUTION_REPORT_STATUS_FILL":
+            state_with_child = _append_exit_component(
+                state,
+                payload=child,
+                source=str(state.get("triggered_by") or "PROTECTIVE_CHILD"),
+                order_id=child_id,
+            )
             return _cancel_verified_or_wait(
                 client=client,
-                state=state,
+                state=state_with_child,
                 reason="PROTECTIVE_CHILD_FILLED",
                 closed_status=str(
                     state.get("triggered_closed_status")
