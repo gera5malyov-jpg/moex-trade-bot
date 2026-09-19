@@ -159,6 +159,24 @@ def send_execution_receipt(
 
 
 
+
+def send_sandbox_ready_email(
+    *,
+    smtp_host: str,
+    user: str,
+    app_password: str,
+    payload: dict,
+) -> None:
+    _send_text_email(
+        smtp_host=smtp_host,
+        user=user,
+        app_password=app_password,
+        recipient=user,
+        subject="[TRADE-SANDBOX-READY]",
+        body=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+    )
+
+
 def send_lifecycle_state_email(
     *,
     smtp_host: str,
@@ -436,6 +454,22 @@ def load_risk_baseline(
         return payload
     finally:
         client.logout()
+
+
+
+def has_sandbox_ready_marker(
+    *,
+    imap_host: str,
+    user: str,
+    app_password: str,
+) -> bool:
+    return _imap_has_exact_subject_from(
+        imap_host=imap_host,
+        user=user,
+        app_password=app_password,
+        subject="[TRADE-SANDBOX-READY]",
+        allowed_from=user,
+    )
 
 
 def has_execution_receipt(
