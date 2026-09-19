@@ -1,7 +1,11 @@
 name: Process trade commands
+# one-time end-to-end bridge verification
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/process-trade-commands.yml"
   schedule:
     # Every 5 minutes on weekdays, 06:00–23:55 MSK; broker status remains authoritative.
     # GitHub cron is UTC: 03:00–20:55 UTC.
