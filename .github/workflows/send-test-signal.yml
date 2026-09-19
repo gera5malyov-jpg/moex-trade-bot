@@ -1,5 +1,5 @@
 name: Send test signal
-# one-time forwarding verification
+# one-time forwarding verification via Gmail plus alias
 
 on:
   workflow_dispatch:
