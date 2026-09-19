@@ -1,0 +1,41 @@
+name: One-time Sandbox lifecycle smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 07:10, 08:10 and 10:10 Moscow on 21 September.
+    # The script itself also hard-checks the year/date and exits on all
+    # other dates, so this cannot become a recurring trading workflow.
+    - cron: "10 4,5,7 21 9 *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-time-sandbox-lifecycle-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Verify actual Sandbox entry and protection
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/sandbox_lifecycle_smoke.py
