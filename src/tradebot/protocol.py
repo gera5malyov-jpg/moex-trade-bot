@@ -564,6 +564,15 @@ class TradeCommand:
                 raise ValueError(
                     "BUY blocked: calibrated probability below 40%"
                 )
+            if not str(data.get("counter_argument") or "").strip():
+                raise ValueError("BUY requires COUNTER_ARGUMENT")
+            if not str(
+                data.get("why_counter_argument_does_not_invalidate")
+                or ""
+            ).strip():
+                raise ValueError(
+                    "BUY requires counter-argument rebuttal"
+                )
 
         return cls(
             protocol_version=PROTOCOL_VERSION,
