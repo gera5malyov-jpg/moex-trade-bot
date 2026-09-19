@@ -597,18 +597,6 @@ def monitor_lifecycle_state(
         lot_size=int(state["lot_size"]),
     )
 
-    if position_lots <= 0:
-        return _cancel_verified_or_wait(
-            client=client,
-            state=state,
-            reason=str(state.get("close_reason") or "POSITION_GONE"),
-            closed_status=str(
-                state.get("pending_closed_status")
-                or state.get("triggered_closed_status")
-                or "CLOSED_POSITION_GONE"
-            ),
-        )
-
     if current_status in {
         "FORCE_EXIT_PENDING",
         "PROTECTION_CANCEL_PENDING",
@@ -778,6 +766,18 @@ def monitor_lifecycle_state(
             }
         )
         return out
+
+    if position_lots <= 0:
+        return _cancel_verified_or_wait(
+            client=client,
+            state=state,
+            reason=str(state.get("close_reason") or "POSITION_GONE"),
+            closed_status=str(
+                state.get("pending_closed_status")
+                or state.get("triggered_closed_status")
+                or "CLOSED_POSITION_GONE"
+            ),
+        )
 
     if current_status not in {"PROTECTED", "PROTECTION_SETUP_FAILED"}:
         return _cancel_verified_or_wait(
