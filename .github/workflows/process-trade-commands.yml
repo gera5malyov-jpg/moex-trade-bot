@@ -1,4 +1,5 @@
 name: Process trade commands
+# one-time post-fix verification
 
 on:
   workflow_dispatch:
