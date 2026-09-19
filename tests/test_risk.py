@@ -61,6 +61,7 @@ class RiskTests(unittest.TestCase):
                 "executedCommissionRub": money("1.5"),
             },
             instrument_lot=10,
+            min_price_increment=Decimal("0.01"),
             consecutive_losses=0,
         )
         self.assertLessEqual(
@@ -83,6 +84,7 @@ class RiskTests(unittest.TestCase):
                     "executedCommissionRub": money("1.5"),
                 },
                 instrument_lot=10,
+            min_price_increment=Decimal("0.01"),
             )
 
     def test_rejects_daily_stop(self):
@@ -100,6 +102,7 @@ class RiskTests(unittest.TestCase):
                     "executedCommissionRub": money("1.5"),
                 },
                 instrument_lot=10,
+            min_price_increment=Decimal("0.01"),
             )
 
     def test_computes_daily_pnl_from_equity_baseline(self):
