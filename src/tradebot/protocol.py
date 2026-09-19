@@ -120,6 +120,7 @@ def _sandbox_readiness_auth_payload(
     *,
     verified_at_utc: str,
     sandbox_account_name: str,
+    sandbox_account_id: str,
     lifecycle_version: str,
     instrument: str,
 ) -> bytes:
@@ -128,6 +129,7 @@ def _sandbox_readiness_auth_payload(
         "environment": "TINVEST_SANDBOX",
         "verified_at_utc": str(verified_at_utc),
         "sandbox_account_name": str(sandbox_account_name),
+        "sandbox_account_id": str(sandbox_account_id),
         "lifecycle_version": str(lifecycle_version),
         "instrument": str(instrument).upper().strip(),
         "entry_protected": True,
@@ -157,6 +159,7 @@ def make_sandbox_readiness_token(
         _sandbox_readiness_auth_payload(
             verified_at_utc=verified_at_utc,
             sandbox_account_name=sandbox_account_name,
+            sandbox_account_id=sandbox_account_id,
             lifecycle_version=lifecycle_version,
             instrument=instrument,
         ),
@@ -169,6 +172,7 @@ def verify_sandbox_readiness_payload(
     payload: dict[str, Any],
     *,
     expected_account_name: str,
+    expected_account_id: str,
 ) -> bool:
     try:
         if str(payload.get("ready_version") or "") != SANDBOX_READY_VERSION:
@@ -178,6 +182,11 @@ def verify_sandbox_readiness_payload(
         if (
             str(payload.get("sandbox_account_name") or "")
             != expected_account_name
+        ):
+            return False
+        if (
+            str(payload.get("sandbox_account_id") or "")
+            != expected_account_id
         ):
             return False
         if (
@@ -206,6 +215,7 @@ def verify_sandbox_readiness_payload(
             secret,
             verified_at_utc=str(payload["verified_at_utc"]),
             sandbox_account_name=expected_account_name,
+            sandbox_account_id=expected_account_id,
             lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
             instrument=str(payload["instrument"]),
         )
