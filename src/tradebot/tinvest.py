@@ -19,8 +19,13 @@ class TInvestSandboxClient:
     SANDBOX_SERVICE = BASE + "/tinkoff.public.invest.api.contract.v1.SandboxService"
     INSTRUMENTS_SERVICE = BASE + "/tinkoff.public.invest.api.contract.v1.InstrumentsService"
 
-    def __init__(self, token: str, account_id: str, timeout: float = 10.0):
-        self.account_id = account_id
+    def __init__(
+        self,
+        token: str,
+        account_name: str = "github-moex-trade-bot",
+        account_id: str | None = None,
+        timeout: float = 10.0,
+    ):
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(
@@ -30,6 +35,7 @@ class TInvestSandboxClient:
                 "Accept": "application/json",
             }
         )
+        self.account_id = account_id or self._find_account_id(account_name)
 
     def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = self.session.post(url, json=payload, timeout=self.timeout)
@@ -41,6 +47,26 @@ class TInvestSandboxClient:
         if not isinstance(data, dict):
             raise RuntimeError("Unexpected T-Invest response")
         return data
+
+    def _find_account_id(self, account_name: str) -> str:
+        url = self.SANDBOX_SERVICE + "/GetSandboxAccounts"
+        data = self._post(url, {"status": "ACCOUNT_STATUS_OPEN"})
+        accounts = data.get("accounts") or []
+
+        exact = [
+            account for account in accounts
+            if str(account.get("name", "")).strip() == account_name
+        ]
+        if not exact:
+            raise RuntimeError(
+                f'Sandbox account "{account_name}" not found. '
+                "Run the Bootstrap T-Invest Sandbox workflow first."
+            )
+
+        account_id = str(exact[0].get("id") or exact[0].get("accountId") or "")
+        if not account_id:
+            raise RuntimeError("Sandbox account found but account ID is missing")
+        return account_id
 
     def find_instrument(self, query: str) -> dict[str, Any]:
         url = self.INSTRUMENTS_SERVICE + "/FindInstrument"
