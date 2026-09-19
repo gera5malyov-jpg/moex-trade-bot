@@ -1,0 +1,37 @@
+name: Scan market candidates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-market-candidates
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Scan and send analysis-only candidates
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          SCANNER_MAX_PER_TYPE: "1"
+          SCANNER_MAX_SIGNALS: "6"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/scan_market.py
