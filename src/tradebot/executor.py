@@ -37,6 +37,75 @@ PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED = True
 EXECUTION_SUPPORTED_TYPES = {"share", "etf"}
 
 
+def _quotation_decimal(value: object, field: str) -> Decimal:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{field} is unavailable")
+    result = (
+        Decimal(str(value.get("units", "0")))
+        + Decimal(str(value.get("nano", 0)))
+        / Decimal("1000000000")
+    )
+    if result <= 0:
+        raise RuntimeError(f"{field} must be positive")
+    return result
+
+
+def _assert_tick_aligned(
+    *,
+    value: Decimal,
+    tick: Decimal,
+    field: str,
+) -> None:
+    units = value / tick
+    if units != units.to_integral_value():
+        raise RuntimeError(
+            f"{field}={value} is not aligned to min price increment {tick}"
+        )
+
+
+def _validate_executable_instrument(
+    *,
+    instrument: dict,
+    command: TradeCommand,
+) -> None:
+    real_exchange = str(
+        instrument.get("realExchange")
+        or instrument.get("real_exchange")
+        or ""
+    ).upper()
+    if real_exchange != "REAL_EXCHANGE_MOEX":
+        raise RuntimeError(
+            "Execution refused: instrument is not confirmed REAL_EXCHANGE_MOEX"
+        )
+    if instrument.get("apiTradeAvailableFlag") is False:
+        raise RuntimeError("Execution refused: API trading is unavailable")
+    if command.action == "BUY" and instrument.get("buyAvailableFlag") is False:
+        raise RuntimeError("Execution refused: BUY is unavailable")
+
+    tick = _quotation_decimal(
+        instrument.get("minPriceIncrement")
+        or instrument.get("min_price_increment"),
+        "min price increment",
+    )
+    if command.limit_price is not None:
+        _assert_tick_aligned(
+            value=command.limit_price,
+            tick=tick,
+            field="limit_price",
+        )
+    if command.stop_loss is not None:
+        _assert_tick_aligned(
+            value=command.stop_loss,
+            tick=tick,
+            field="stop_loss",
+        )
+    if command.take_profit is not None:
+        _assert_tick_aligned(
+            value=command.take_profit,
+            tick=tick,
+            field="take_profit",
+        )
+
 
 def _position_quantity(position: dict) -> Decimal:
     value = position.get("quantity")
@@ -87,7 +156,11 @@ def _validate_sector_concentration(
         existing_sector = str(
             existing.get("sector") or ""
         ).strip().lower()
-        if new_sector and existing_sector and new_sector == existing_sector:
+        if not new_sector or not existing_sector:
+            raise RuntimeError(
+                "Hard risk: sector metadata unavailable for concentration check"
+            )
+        if new_sector == existing_sector:
             raise RuntimeError(
                 "Hard risk: sector concentration blocked (" + new_sector + ")"
             )
@@ -147,6 +220,13 @@ def validate_command(command: TradeCommand, config: Config) -> None:
     if command.action != "SKIP" and not config.trading_enabled:
         raise RuntimeError("TRADING_ENABLED is false")
 
+    if (
+        command.action == "BUY"
+        and command.time_stop is not None
+        and command.time_stop <= now
+    ):
+        raise RuntimeError("BUY locked: time_stop is not in the future")
+
     if command.action == "BUY" and not PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED:
         raise RuntimeError(
             "BUY locked: protective STOP/TAKE/TIME_STOP lifecycle "
@@ -176,6 +256,16 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
             "reviewer_note": command.reviewer_note,
         }
 
+    # Standalone SELL is intentionally fail-closed for now. Exits from an
+    # opened automated position are owned by the protective lifecycle so that
+    # STOP/TAKE orders are cancelled/reconciled before a manual-style exit.
+    if command.action == "SELL":
+        return {
+            "status": "execution_blocked",
+            "signal_id": command.signal_id,
+            "reason": "STANDALONE_SELL_LIFECYCLE_INTEGRATION_NOT_IMPLEMENTED",
+        }
+
     client = TInvestSandboxClient(
         token=config.tinvest_token,
         account_name=config.sandbox_account_name,
@@ -187,6 +277,11 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
         side=command.action,
         quantity_lots=command.quantity_lots,
         limit_price=command.limit_price,
+    )
+
+    _validate_executable_instrument(
+        instrument=prepared["instrument"],
+        command=command,
     )
 
     hard_risk = None
