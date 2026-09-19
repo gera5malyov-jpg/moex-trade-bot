@@ -15,7 +15,8 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Create sandbox account
+      - name: Create or verify sandbox account
         env:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
         run: python scripts/bootstrap_sandbox.py
