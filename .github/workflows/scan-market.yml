@@ -2,6 +2,9 @@ name: Scan market candidates
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/scan-market.yml"
 
 permissions:
   contents: read
@@ -30,7 +33,7 @@ jobs:
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "1"
-          SCANNER_MAX_SIGNALS: "6"
+          SCANNER_MAX_SIGNALS: "2"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
