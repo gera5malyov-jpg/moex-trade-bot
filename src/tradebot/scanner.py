@@ -28,8 +28,8 @@ MIN_ABS_MOVE_PERCENT = {
 }
 
 MAX_LAST_PRICE_AGE_MINUTES = {
-    "share": 30,
-    "etf": 30,
+    "share": 5,
+    "etf": 5,
     "bond": 120,
     "currency": 30,
     "futures": 30,
@@ -331,6 +331,28 @@ def _compact_account_positions(data: dict[str, Any]) -> dict[str, Any]:
         "options": data.get("options") or [],
     }
 
+def realized_volatility_percent(
+    closes: list[Decimal],
+) -> Decimal | None:
+    if len(closes) < 3:
+        return None
+    returns: list[Decimal] = []
+    for previous, current in zip(closes, closes[1:]):
+        if previous <= 0 or current <= 0:
+            continue
+        returns.append(
+            (current / previous - Decimal("1")) * Decimal("100")
+        )
+    if len(returns) < 2:
+        return None
+    mean = sum(returns) / Decimal(len(returns))
+    variance = sum(
+        (value - mean) ** 2
+        for value in returns
+    ) / Decimal(len(returns))
+    return variance.sqrt()
+
+
 def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
     closes = [
         quote_to_decimal(c.get("close"))
@@ -353,6 +375,28 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
         if avg_volume > 0
         else Decimal("0")
     )
+    highs = [
+        quote_to_decimal(c.get("high"))
+        for c in candles
+        if quote_to_decimal(c.get("high")) > 0
+    ]
+    lows = [
+        quote_to_decimal(c.get("low"))
+        for c in candles
+        if quote_to_decimal(c.get("low")) > 0
+    ]
+    turnover_estimate = Decimal("0")
+    for candle in candles:
+        high = quote_to_decimal(candle.get("high"))
+        low = quote_to_decimal(candle.get("low"))
+        close = quote_to_decimal(candle.get("close"))
+        volume = Decimal(str(candle.get("volume", "0")))
+        if high > 0 and low > 0 and close > 0 and volume > 0:
+            turnover_estimate += (
+                (high + low + close) / Decimal("3")
+            ) * volume
+
+    rv = realized_volatility_percent(closes)
     return {
         "candles_count": len(candles),
         "ema9": str(ema(closes, 9)) if ema(closes, 9) is not None else None,
@@ -361,6 +405,13 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
         "atr14": str(atr(candles, 14)) if atr(candles, 14) is not None else None,
         "vwap": str(vwap(candles)) if vwap(candles) is not None else None,
         "relative_volume": str(relative_volume),
+        "average_volume_20": str(avg_volume),
+        "last_volume": str(last_volume),
+        "volume_sum": str(sum(volumes, Decimal("0"))),
+        "turnover_estimate": str(turnover_estimate),
+        "realized_volatility_percent": str(rv) if rv is not None else None,
+        "recent_high": str(max(highs)) if highs else None,
+        "recent_low": str(min(lows)) if lows else None,
         "last_close": str(closes[-1]) if closes else None,
     }
 
@@ -374,17 +425,35 @@ def enrich_candidate(
 
     order_book = client.get_order_book(uid, depth=10)
     trading_status = client.get_trading_status(uid)
+    candles_1m = client.get_candles(
+        instrument_uid=uid,
+        from_time=now - timedelta(hours=2),
+        to_time=now,
+        interval="CANDLE_INTERVAL_1_MIN",
+    )
     candles_5m = client.get_candles(
         instrument_uid=uid,
-        from_time=now - timedelta(hours=6),
+        from_time=now - timedelta(hours=8),
         to_time=now,
         interval="CANDLE_INTERVAL_5_MIN",
     )
     candles_15m = client.get_candles(
         instrument_uid=uid,
-        from_time=now - timedelta(days=2),
+        from_time=now - timedelta(days=3),
         to_time=now,
         interval="CANDLE_INTERVAL_15_MIN",
+    )
+    candles_1h = client.get_candles(
+        instrument_uid=uid,
+        from_time=now - timedelta(days=14),
+        to_time=now,
+        interval="CANDLE_INTERVAL_HOUR",
+    )
+    candles_1d = client.get_candles(
+        instrument_uid=uid,
+        from_time=now - timedelta(days=120),
+        to_time=now,
+        interval="CANDLE_INTERVAL_DAY",
     )
 
     bids = order_book.get("bids") or []
@@ -401,7 +470,7 @@ def enrich_candidate(
 
     instrument = candidate["instrument"]
     return {
-        "scanner_version": "2",
+        "scanner_version": "3",
         "scanner_role": "CANDIDATE_ONLY_NOT_A_TRADE_DECISION",
         "data_timestamp": now.isoformat(),
         "instrument_name": instrument.get("name"),
@@ -431,8 +500,11 @@ def enrich_candidate(
         "orderbook_ts": order_book.get("orderbookTs")
         or order_book.get("orderbook_ts"),
         "trading_status": trading_status,
+        "technical_1m": _candle_summary(candles_1m),
         "technical_5m": _candle_summary(candles_5m),
         "technical_15m": _candle_summary(candles_15m),
+        "technical_1h": _candle_summary(candles_1h),
+        "technical_1d": _candle_summary(candles_1d),
         "portfolio": _compact_portfolio(client.get_portfolio()),
         "account_positions": _compact_account_positions(client.get_positions()),
         "raw_order_book_top5": {
