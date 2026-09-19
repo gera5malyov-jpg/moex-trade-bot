@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from .protocol import TradeCommand, parse_iso_utc, utc_now
+from .protocol import (
+    PROTECTIVE_LIFECYCLE_VERSION,
+    TradeCommand,
+    parse_iso_utc,
+    utc_now,
+)
 from .tinvest import TInvestSandboxClient
 
 
@@ -202,7 +207,7 @@ def open_protected_long(
     )
 
     state: dict[str, Any] = {
-        "lifecycle_version": "1",
+        "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
         "environment": "TINVEST_SANDBOX",
         "signal_id": command.signal_id,
         "ticker": command.ticker,
