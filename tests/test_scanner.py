@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from tradebot.scanner import atr, ema, rsi, vwap
+from tradebot.scanner import _eligible, atr, ema, rsi, vwap
 
 
 def q(value: str):
@@ -35,6 +35,32 @@ class ScannerMathTests(unittest.TestCase):
             )
         self.assertIsNotNone(atr(candles, 14))
         self.assertIsNotNone(vwap(candles))
+
+    def test_exchange_candidates_are_moex_only(self):
+        base = {
+            "uid": "uid",
+            "ticker": "TEST",
+            "classCode": "TQBR",
+            "apiTradeAvailableFlag": True,
+            "buyAvailableFlag": True,
+            "forQualInvestorFlag": False,
+        }
+        moex = dict(base, realExchange="REAL_EXCHANGE_MOEX")
+        rts = dict(base, realExchange="REAL_EXCHANGE_RTS")
+        self.assertTrue(_eligible(moex, "share"))
+        self.assertFalse(_eligible(rts, "share"))
+
+    def test_dfa_remains_special_analysis_only_universe(self):
+        dfa = {
+            "uid": "dfa-uid",
+            "ticker": "DFA",
+            "classCode": "DFA",
+            "apiTradeAvailableFlag": True,
+            "buyAvailableFlag": True,
+            "forQualInvestorFlag": False,
+            "realExchange": "REAL_EXCHANGE_DEALER",
+        }
+        self.assertTrue(_eligible(dfa, "dfa"))
 
 
 if __name__ == "__main__":
