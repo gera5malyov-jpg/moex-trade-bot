@@ -16,6 +16,85 @@ from tradebot.scanner import enrich_candidate, scan_candidates
 from tradebot.tinvest import TInvestSandboxClient
 
 
+def execution_snapshot_ready(
+    *,
+    candidate: dict,
+    context: dict,
+    hard_risk_context: dict,
+    sandbox_ready: bool,
+) -> bool:
+    if candidate["instrument_type"] not in {"share", "etf"}:
+        return False
+    if not sandbox_ready:
+        return False
+    if hard_risk_context.get("error") is not None:
+        return False
+    if hard_risk_context.get("daily_pnl_rub") is None:
+        return False
+    losses = hard_risk_context.get("consecutive_losses")
+    if losses is None or int(losses) >= 3:
+        return False
+
+    instrument = candidate.get("instrument") or {}
+    if instrument.get("apiTradeAvailableFlag") is not True:
+        return False
+    if instrument.get("buyAvailableFlag") is not True:
+        return False
+
+    trading = context.get("trading_status") or {}
+    status = str(
+        trading.get("tradingStatus")
+        or trading.get("trading_status")
+        or ""
+    ).upper()
+    if status != "SECURITY_TRADING_STATUS_NORMAL_TRADING":
+        return False
+    if trading.get("limitOrderAvailableFlag") is not True:
+        return False
+    if trading.get("apiTradeAvailableFlag") is False:
+        return False
+
+    try:
+        if float(context.get("bid") or 0) <= 0:
+            return False
+        if float(context.get("ask") or 0) <= 0:
+            return False
+        if float(context.get("spread_percent")) < 0:
+            return False
+        if float(
+            (context.get("account_positions") or {}).get(
+                "available_cash_rub", "0"
+            )
+        ) <= 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    for key in (
+        "technical_1m",
+        "technical_5m",
+        "technical_15m",
+        "technical_1h",
+        "technical_1d",
+    ):
+        technical = context.get(key) or {}
+        required = (
+            "ema9",
+            "ema21",
+            "rsi14",
+            "atr14",
+            "vwap",
+            "realized_volatility_percent",
+            "last_close",
+        )
+        if int(technical.get("candles_count") or 0) < 22:
+            return False
+        if any(technical.get(field) is None for field in required):
+            return False
+
+    return True
+
+
 def main():
     cfg = Config.from_env()
     client = TInvestSandboxClient(
@@ -84,8 +163,21 @@ def main():
         max_per_type=max_per_type,
     )
 
+    supported_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate["instrument_type"] in {"share", "etf"}
+    ]
+    analysis_only_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate["instrument_type"] not in {"share", "etf"}
+    ]
+    ordered_candidates = supported_candidates + analysis_only_candidates
+
     sent = 0
-    for candidate in candidates:
+    executable_sent = 0
+    for candidate in ordered_candidates:
         if sent >= max_signals:
             break
         try:
@@ -104,11 +196,11 @@ def main():
 
             context = enrich_candidate(client, candidate)
             context["hard_risk_context"] = dict(hard_risk_context)
-            execution_capability = (
-                sandbox_ready
-                and hard_risk_context["daily_pnl_rub"] is not None
-                and hard_risk_context["consecutive_losses"] is not None
-                and candidate["instrument_type"] in {"share", "etf"}
+            execution_capability = execution_snapshot_ready(
+                candidate=candidate,
+                context=context,
+                hard_risk_context=hard_risk_context,
+                sandbox_ready=sandbox_ready,
             )
             signal = Signal.create(
                 secret=cfg.hmac_secret,
@@ -149,6 +241,8 @@ def main():
                 )
             )
             sent += 1
+            if execution_capability:
+                executable_sent += 1
         except Exception as exc:
             print(
                 f"Candidate enrichment/send failed for "
@@ -158,7 +252,8 @@ def main():
 
     print(
         f"Scanner candidates={len(candidates)}; "
-        f"analysis-only signals sent={sent}"
+        f"signals sent={sent}; executable-capable={executable_sent}; "
+        f"analysis-only={sent - executable_sent}"
     )
 
 
