@@ -520,7 +520,7 @@ def load_risk_baseline(
                 continue
             if payload.get("environment") != "TINVEST_SANDBOX":
                 continue
-            if str(payload.get("baseline_version") or "") != "2":
+            if str(payload.get("baseline_version") or "") != "3":
                 continue
             if (
                 str(payload.get("trading_date_moscow") or "")
