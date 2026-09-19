@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     # 23:52 Moscow = 20:52 UTC.
-    - cron: "52 20 * * 1-5"
+    - cron: "52 20 * * *"
 
 permissions:
   contents: read
