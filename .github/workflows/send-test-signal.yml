@@ -1,7 +1,11 @@
 name: Send test signal
+# automatic Outlook rule verification
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/send-test-signal.yml"
 
 permissions:
   contents: read
