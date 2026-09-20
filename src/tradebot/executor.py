@@ -295,6 +295,25 @@ def _validate_new_entry_window(now) -> None:
         )
 
 
+def _validate_intraday_time_stop(*, now, time_stop_value) -> None:
+    if time_stop_value <= now:
+        raise RuntimeError("BUY locked: time_stop is not in the future")
+    moscow_now = now.astimezone(ZoneInfo("Europe/Moscow"))
+    moscow_stop = time_stop_value.astimezone(
+        ZoneInfo("Europe/Moscow")
+    )
+    if moscow_stop.date() != moscow_now.date():
+        raise RuntimeError(
+            "BUY locked: overnight automation is disabled until "
+            "continuous lifecycle monitoring is implemented"
+        )
+    if moscow_stop.time().replace(tzinfo=None) > time(18, 30):
+        raise RuntimeError(
+            "BUY locked: intraday time_stop must be no later than "
+            "18:30 MSK"
+        )
+
+
 def validate_command(command: TradeCommand, config: Config) -> None:
     if command.protocol_version != PROTOCOL_VERSION:
         raise ValueError("Unsupported protocol_version")
@@ -354,22 +373,10 @@ def validate_command(command: TradeCommand, config: Config) -> None:
         _validate_new_entry_window(now)
 
     if command.action == "BUY" and command.time_stop is not None:
-        if command.time_stop <= now:
-            raise RuntimeError("BUY locked: time_stop is not in the future")
-        moscow_now = now.astimezone(ZoneInfo("Europe/Moscow"))
-        moscow_stop = command.time_stop.astimezone(
-            ZoneInfo("Europe/Moscow")
+        _validate_intraday_time_stop(
+            now=now,
+            time_stop_value=command.time_stop,
         )
-        if moscow_stop.date() != moscow_now.date():
-            raise RuntimeError(
-                "BUY locked: overnight automation is disabled until "
-                "continuous lifecycle monitoring is implemented"
-            )
-        if moscow_stop.time().replace(tzinfo=None) > time(18, 30):
-            raise RuntimeError(
-                "BUY locked: intraday time_stop must be no later than "
-                "18:30 MSK"
-            )
 
     if command.action == "BUY" and not PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED:
         raise RuntimeError(
