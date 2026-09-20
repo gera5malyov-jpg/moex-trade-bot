@@ -429,10 +429,11 @@ class TInvestSandboxClient:
             payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_LIMIT"
             payload["takeProfitType"] = "TAKE_PROFIT_TYPE_REGULAR"
         else:
-            # Narrow safety exception: STOP_LOSS creates a market-style child
-            # so a fast adverse move is not left unprotected by a resting
-            # limit order. The stop trigger itself is still explicit.
-            payload["exchangeOrderType"] = "EXCHANGE_ORDER_TYPE_MARKET"
+            # STOP_ORDER_TYPE_STOP_LOSS is the broker-native emergency stop.
+            # Do not force exchangeOrderType here: T-Invest documents that
+            # field for the child order of take-profit. The live Sandbox smoke
+            # test must validate actual stop-loss activation semantics.
+            pass
 
         result = self._post(
             self.SANDBOX_SERVICE + "/PostSandboxStopOrder",
