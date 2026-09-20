@@ -356,9 +356,19 @@ def validate_command(command: TradeCommand, config: Config) -> None:
     if command.action == "BUY" and command.time_stop is not None:
         if command.time_stop <= now:
             raise RuntimeError("BUY locked: time_stop is not in the future")
-        if command.time_stop > now + timedelta(hours=36):
+        moscow_now = now.astimezone(ZoneInfo("Europe/Moscow"))
+        moscow_stop = command.time_stop.astimezone(
+            ZoneInfo("Europe/Moscow")
+        )
+        if moscow_stop.date() != moscow_now.date():
             raise RuntimeError(
-                "BUY locked: time_stop exceeds 36-hour short-term horizon"
+                "BUY locked: overnight automation is disabled until "
+                "continuous lifecycle monitoring is implemented"
+            )
+        if moscow_stop.time().replace(tzinfo=None) > time(18, 30):
+            raise RuntimeError(
+                "BUY locked: intraday time_stop must be no later than "
+                "18:30 MSK"
             )
 
     if command.action == "BUY" and not PROTECTIVE_ORDER_LIFECYCLE_IMPLEMENTED:
