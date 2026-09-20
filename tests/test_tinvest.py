@@ -42,7 +42,7 @@ class TInvestPayloadTests(unittest.TestCase):
         self.assertEqual(payload["price"], payload["stopPrice"])
         self.assertFalse(payload["confirmMarginTrade"])
 
-    def test_stop_loss_creates_explicit_market_child(self):
+    def test_stop_loss_uses_native_broker_stop_semantics(self):
         client = self.client()
         client.post_stop_order(
             instrument_uid="uid",
@@ -52,10 +52,7 @@ class TInvestPayloadTests(unittest.TestCase):
             idempotency_seed="sl",
         )
         payload = client.calls[-1][1]
-        self.assertEqual(
-            payload["exchangeOrderType"],
-            "EXCHANGE_ORDER_TYPE_MARKET",
-        )
+        self.assertNotIn("exchangeOrderType", payload)
         self.assertEqual(payload["price"], payload["stopPrice"])
         self.assertFalse(payload["confirmMarginTrade"])
 
