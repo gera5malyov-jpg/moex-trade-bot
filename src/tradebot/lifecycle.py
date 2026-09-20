@@ -682,7 +682,7 @@ def monitor_lifecycle_state(
             item["status"] not in terminal
             for item in child_statuses
         ):
-            out = dict(state)
+            out = dict(working_state)
             out.update(
                 {
                     "updated_at": now.isoformat(),
@@ -900,7 +900,12 @@ def monitor_lifecycle_state(
     child = client.get_order_state(child_id)
     child_status = _status(child)
     if child_status == "EXECUTION_REPORT_STATUS_FILL":
-        filled_state = dict(state)
+        filled_state = _append_exit_component(
+            state,
+            payload=child,
+            source=trigger_name,
+            order_id=child_id,
+        )
         filled_state.update(
             {
                 "triggered_by": trigger_name,
