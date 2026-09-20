@@ -1,7 +1,10 @@
 import unittest
 from datetime import datetime, timezone
 
-from tradebot.executor import _validate_new_entry_window
+from tradebot.executor import (
+    _validate_intraday_time_stop,
+    _validate_new_entry_window,
+)
 
 
 class ExecutorWindowTests(unittest.TestCase):
@@ -21,6 +24,35 @@ class ExecutorWindowTests(unittest.TestCase):
             _validate_new_entry_window(
                 datetime(2026, 9, 21, 14, 45, tzinfo=timezone.utc)
             )
+
+    def test_rejects_next_day_time_stop(self):
+        now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+        with self.assertRaises(RuntimeError):
+            _validate_intraday_time_stop(
+                now=now,
+                time_stop_value=datetime(
+                    2026, 9, 22, 8, 0, tzinfo=timezone.utc
+                ),
+            )
+
+    def test_rejects_time_stop_after_1830_moscow(self):
+        now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+        with self.assertRaises(RuntimeError):
+            _validate_intraday_time_stop(
+                now=now,
+                time_stop_value=datetime(
+                    2026, 9, 21, 15, 31, tzinfo=timezone.utc
+                ),
+            )
+
+    def test_allows_same_day_time_stop_before_1830_moscow(self):
+        now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+        _validate_intraday_time_stop(
+            now=now,
+            time_stop_value=datetime(
+                2026, 9, 21, 15, 20, tzinfo=timezone.utc
+            ),
+        )
 
     def test_rejects_weekend_session(self):
         with self.assertRaises(RuntimeError):
