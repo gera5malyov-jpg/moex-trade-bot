@@ -544,8 +544,24 @@ def execute_command(command: TradeCommand, config: Config) -> dict:
                 raise RuntimeError(
                     "Hard risk: calibrated probability requires expected_value_rub"
                 )
+            probability = (
+                command.probability_success_percent / Decimal("100")
+            )
+            computed_ev = (
+                probability * hard_risk.net_reward_rub
+                - (Decimal("1") - probability)
+                * hard_risk.net_risk_rub
+            )
+            if (
+                abs(command.expected_value_rub - computed_ev)
+                > Decimal("0.01")
+            ):
+                raise RuntimeError(
+                    "Hard risk: expected_value_rub does not match "
+                    "code-computed calibrated EV"
+                )
             minimum_ev = hard_risk.net_risk_rub * Decimal("0.3")
-            if command.expected_value_rub < minimum_ev:
+            if computed_ev < minimum_ev:
                 raise RuntimeError(
                     "Hard risk: expected value below 0.3 x net risk"
                 )
