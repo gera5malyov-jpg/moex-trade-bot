@@ -88,7 +88,8 @@ Scanner:
 - перед BUY используется Sandbox OrderPrice;
 - любое пополнение/вывод после релевантного daily/weekly/monthly baseline блокирует BUY;
 - live order book перед BUY должен быть не старше 60 секунд;
-- код независимо проверяет торговое окно 10:05–17:45 МСК.
+- код независимо проверяет торговое окно 10:05–17:45 МСК;
+- автоматический overnight/NEXT_DAY запрещён; TIME_STOP для BUY должен быть в тот же день и не позднее 18:30 МСК.
 
 T-Invest Sandbox не всегда рассчитывает portfolio daily yield, поэтому дневной P&L считается как:
 
@@ -111,7 +112,7 @@ current portfolio equity - start-of-session baseline equity
 7. если установка защиты после входа не удалась, позиция немедленно переводится в FORCE_EXIT;
 8. lifecycle state сохраняется append-only в Gmail как `[TRADE-LIFECYCLE] <signal_id>`, поэтому monitor восстанавливается после перезапуска.
 
-Broker-side STOP/TAKE остаются активны между 5-минутными monitor runs.
+Broker-side STOP/TAKE остаются активны между 5-минутными monitor runs. Автоматический overnight пока запрещён, потому что lifecycle monitor не работает непрерывно ночью/вечером.
 
 ## Risk baseline v3
 
