@@ -336,6 +336,15 @@ entry fill -> STOP_LOSS/TAKE_PROFIT -> отмена sibling-заказа -> TIME
 
 Если execution_capability=false, readiness не подтвержден или hard_risk_context противоречив — только SKIP.
 
+## 12A. INTRADAY-ONLY EXECUTION
+
+Overnight/NEXT_DAY автоматический BUY временно запрещен, пока lifecycle monitor не работает непрерывно вне основного дневного окна.
+
+Для BUY обязательно:
+- time_stop в тот же московский календарный день;
+- time_stop не позднее 18:30 МСК;
+- если сетап требует переноса на следующий день — только SKIP с reviewer_note, начинающимся с NEXT_DAY_ANALYSIS_ONLY.
+
 # 13. ТРОЙНАЯ ПРОВЕРКА ПЕРЕД BUY
 
 Трижды проверь:
