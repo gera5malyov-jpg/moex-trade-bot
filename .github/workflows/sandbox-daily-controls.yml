@@ -1,0 +1,62 @@
+name: Sandbox daily controls
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 06:00 Moscow on weekdays.
+    - cron: "0 3 * * 1-5"
+    # 23:52 Moscow every day.
+    - cron: "52 20 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  risk-baseline:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: sandbox-risk-baseline
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Create signed risk baseline
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/risk_baseline.py
+
+  daily-snapshot:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '52 20 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: sandbox-daily-snapshot
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Send broker snapshot
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/daily_snapshot.py
