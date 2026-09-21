@@ -12,9 +12,9 @@ on:
     - cron: "*/5 7-14 * * 1-5"
     - cron: "0,5,10,15,20,25,30,35,40,45 15 * * 1-5"
 
-    # Candidate scan every 15 minutes during the main session.
-    # Offset by seven minutes to avoid colliding with the 5-minute heartbeat.
-    - cron: "7,22,37,52 7-14 * * 1-5"
+    # Candidate scan hourly at :05 UTC-hour offset during the main session.
+    # This is synchronized with the hourly ChatGPT reviewer fallback.
+    - cron: "5 7-14 * * 1-5"
 
 
     # End-of-day Sandbox snapshot at 23:52 Moscow (20:52 UTC).
@@ -84,7 +84,7 @@ jobs:
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "true"
           COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '15' }}
+          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
@@ -153,7 +153,7 @@ jobs:
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "true"
           COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '15' }}
+          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
@@ -173,7 +173,7 @@ jobs:
         run: python scripts/monitor_lifecycle.py
 
   scan:
-    if: github.event_name == 'schedule' && github.event.schedule == '7,22,37,52 7-14 * * 1-5'
+    if: github.event_name == 'schedule' && github.event.schedule == '5 7-14 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
