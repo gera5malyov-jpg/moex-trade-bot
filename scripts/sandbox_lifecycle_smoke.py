@@ -209,13 +209,36 @@ def main():
         since_utc=str(baseline["generated_at_utc"]),
     )
 
-    instrument = client.find_instrument("SBER_TQBR")
-    if str(instrument.get("realExchange") or "") != "REAL_EXCHANGE_MOEX":
-        raise RuntimeError("Smoke test instrument is not confirmed MOEX")
-    uid = str(instrument.get("uid") or instrument.get("instrumentUid") or "")
+    instrument_short = client.find_instrument("SBER_TQBR")
+    uid = str(
+        instrument_short.get("uid")
+        or instrument_short.get("instrumentUid")
+        or ""
+    )
+    if not uid:
+        raise RuntimeError("Smoke test exact instrument UID is missing")
+
+    instrument = client.get_instrument_by_uid(uid)
+    real_exchange = str(
+        instrument.get("realExchange")
+        or instrument.get("real_exchange")
+        or ""
+    )
+    if real_exchange != "REAL_EXCHANGE_MOEX":
+        raise RuntimeError(
+            "Smoke test instrument is not confirmed MOEX: "
+            f"real_exchange={real_exchange!r}"
+        )
     ticker = str(instrument.get("ticker") or "").upper()
-    class_code = str(instrument.get("classCode") or "").upper()
-    tick = q(instrument.get("minPriceIncrement"))
+    class_code = str(
+        instrument.get("classCode")
+        or instrument.get("class_code")
+        or ""
+    ).upper()
+    tick = q(
+        instrument.get("minPriceIncrement")
+        or instrument.get("min_price_increment")
+    )
     if not uid or ticker != "SBER" or class_code != "TQBR":
         raise RuntimeError("Smoke test exact instrument resolution failed")
 
