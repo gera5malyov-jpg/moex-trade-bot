@@ -2,14 +2,8 @@ name: Process trade commands
 
 on:
   workflow_dispatch:
-  schedule:
-    # Every 5 minutes on weekdays, 09:45–18:45 MSK.
-    # Broker-side STOP/TAKE remains active outside GitHub monitor hours.
-    # Exact UTC window: 06:45–15:45.
-    - cron: "45,50,55 6 * * 1-5"
-    - cron: "*/5 7-14 * * 1-5"
-    - cron: "0,5,10,15,20,25,30,35,40,45 15 * * 1-5"
 
+# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
 permissions:
   contents: read
 
