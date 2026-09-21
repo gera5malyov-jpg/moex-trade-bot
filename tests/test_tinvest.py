@@ -20,10 +20,29 @@ class TInvestPayloadTests(unittest.TestCase):
                     "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
                     "lotsExecuted": "1",
                 }
+            if url.endswith("/GetInstrumentBy"):
+                return {
+                    "instrument": {
+                        "uid": "uid",
+                        "ticker": "SBER",
+                        "classCode": "TQBR",
+                        "realExchange": "REAL_EXCHANGE_MOEX",
+                    }
+                }
             raise AssertionError(f"Unexpected endpoint: {url}")
 
         client._post = fake_post
         return client
+
+    def test_get_instrument_by_uid_uses_full_instrument_endpoint(self):
+        client = self.client()
+        instrument = client.get_instrument_by_uid("uid")
+        self.assertEqual(instrument["uid"], "uid")
+        self.assertEqual(instrument["realExchange"], "REAL_EXCHANGE_MOEX")
+        url, payload = client.calls[-1]
+        self.assertTrue(url.endswith("/GetInstrumentBy"))
+        self.assertEqual(payload["idType"], "INSTRUMENT_ID_TYPE_UID")
+        self.assertEqual(payload["id"], "uid")
 
     def test_take_profit_creates_limit_child(self):
         client = self.client()
