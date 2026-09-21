@@ -151,6 +151,7 @@ def main():
 
     max_per_type = int(os.getenv("SCANNER_MAX_PER_TYPE", "1"))
     max_signals = int(os.getenv("SCANNER_MAX_SIGNALS", "6"))
+    analysis_only_max_signals = int(os.getenv("SCANNER_ANALYSIS_ONLY_MAX_SIGNALS", "0"))
     cooldown_minutes = int(os.getenv("SCANNER_COOLDOWN_MINUTES", "45"))
 
     sandbox_ready = has_sandbox_ready_marker(
@@ -317,9 +318,13 @@ def main():
 
     sent = 0
     executable_sent = 0
+    analysis_only_sent = 0
     for candidate in ordered_candidates:
         if sent >= max_signals:
             break
+        if (candidate["instrument_type"] not in {"share", "etf"} and
+                analysis_only_sent >= analysis_only_max_signals):
+            continue
         try:
             if has_recent_signal_for_instrument(
                 imap_host=cfg.imap_host,
@@ -383,6 +388,8 @@ def main():
             sent += 1
             if execution_capability:
                 executable_sent += 1
+            if candidate["instrument_type"] not in {"share", "etf"}:
+                analysis_only_sent += 1
         except Exception as exc:
             print(
                 f"Candidate enrichment/send failed for "
@@ -393,7 +400,7 @@ def main():
     print(
         f"Scanner candidates={len(candidates)}; "
         f"signals sent={sent}; executable-capable={executable_sent}; "
-        f"analysis-only={sent - executable_sent}"
+        f"analysis-only={analysis_only_sent}"
     )
 
 
