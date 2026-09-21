@@ -256,6 +256,29 @@ class TInvestSandboxClient:
             )
         return exact[0]
 
+    def get_instrument_by_uid(self, instrument_uid: str) -> dict[str, Any]:
+        instrument_uid = instrument_uid.strip()
+        if not instrument_uid:
+            raise ValueError("Instrument UID is empty")
+        data = self._post(
+            self.INSTRUMENTS_SERVICE + "/GetInstrumentBy",
+            {
+                "idType": "INSTRUMENT_ID_TYPE_UID",
+                "id": instrument_uid,
+            },
+        )
+        instrument = data.get("instrument")
+        if not isinstance(instrument, dict):
+            raise RuntimeError("GetInstrumentBy returned no instrument")
+        actual_uid = str(
+            instrument.get("uid") or instrument.get("instrumentUid") or ""
+        )
+        if actual_uid != instrument_uid:
+            raise RuntimeError(
+                "GetInstrumentBy returned mismatched instrument UID"
+            )
+        return instrument
+
     def resolve_instrument(
         self,
         *,
