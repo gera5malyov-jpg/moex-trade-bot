@@ -2,12 +2,8 @@ name: Scan market candidates
 
 on:
   workflow_dispatch:
-  schedule:
-    # Every 15 minutes, weekdays, 10:00–17:45 Moscow (UTC+3).
-    # 10:00 and 17:45 runs remain analysis-only because hard entry window
-    # is 10:05 <= time < 17:45.
-    - cron: "*/15 7-14 * * 1-5"
 
+# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
 permissions:
   contents: read
 
