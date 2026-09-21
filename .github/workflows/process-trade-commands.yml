@@ -31,7 +31,7 @@ jobs:
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "true"
           COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '15' }}
+          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
