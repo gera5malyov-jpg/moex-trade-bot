@@ -2,7 +2,7 @@ name: Trading scheduler hub
 
 on:
   workflow_dispatch:
-  # Temporary push trigger for immediate catch-up validation of this repair.
+  # Temporary push trigger for immediate catch-up validation after instrument fix.
   # It will be removed after the catch-up run is verified.
   push:
     branches:
