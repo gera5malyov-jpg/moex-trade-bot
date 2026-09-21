@@ -1,42 +1,21 @@
-name: Trading scheduler hub
+name: Trading maintenance
 
 on:
   workflow_dispatch:
-  schedule:
-    # Daily risk baseline at 06:00 Moscow (03:00 UTC), weekdays.
-    - cron: "0 3 * * 1-5"
-
-    # Sandbox command processing / lifecycle heartbeat, weekdays,
-    # 09:45–18:45 Moscow (06:45–15:45 UTC), every 5 minutes.
-    - cron: "45,50,55 6 * * 1-5"
-    - cron: "*/5 7-14 * * 1-5"
-    - cron: "0,5,10,15,20,25,30,35,40,45 15 * * 1-5"
-
-    # Candidate scan hourly at :28 during the main session, one minute before the reviewer.
-    # The reviewer scheduler currently supports hourly recurrence, so keep scan/review aligned.
-    - cron: "28 7-14 * * 1-5"
-
-
-    # End-of-day Sandbox snapshot at 23:52 Moscow (20:52 UTC).
-    - cron: "52 20 * * *"
 
 permissions:
   contents: read
 
 jobs:
   catch-up:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-
       - run: pip install -r requirements.txt
-
       - name: Create today's Sandbox risk baseline
         env:
           PYTHONPATH: src
@@ -48,19 +27,6 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/risk_baseline.py
-
-      - name: Verify actual Sandbox entry and protective lifecycle
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/sandbox_lifecycle_smoke.py
-
       - name: Scan market candidates
         env:
           PYTHONPATH: src
@@ -77,7 +43,6 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/scan_market.py
-
       - name: Process fresh trade commands
         env:
           PYTHONPATH: src
@@ -91,8 +56,7 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/process_commands.py
-
-      - name: Monitor existing protective lifecycle
+      - name: Monitor protective lifecycle
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
@@ -103,126 +67,3 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/monitor_lifecycle.py
-
-  risk-baseline:
-    if: github.event_name == 'schedule' && github.event.schedule == '0 3 * * 1-5'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: daily-sandbox-risk-baseline
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Send durable daily risk baseline
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/risk_baseline.py
-
-  process:
-    if: >-
-      github.event_name == 'schedule' &&
-      (github.event.schedule == '45,50,55 6 * * 1-5' ||
-       github.event.schedule == '*/5 7-14 * * 1-5' ||
-       github.event.schedule == '0,5,10,15,20,25,30,35,40,45 15 * * 1-5')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: process-trade-commands
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-
-      - name: Process commands
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "true"
-          COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/process_commands.py
-
-      - name: Monitor existing protective lifecycle
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "true"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/monitor_lifecycle.py
-
-  scan:
-    if: github.event_name == 'schedule' && github.event.schedule == '28 7-14 * * 1-5'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: scan-market-candidates
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Scan and send reviewed candidates
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          SCANNER_MAX_PER_TYPE: "1"
-          SCANNER_MAX_SIGNALS: "2"
-          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
-          SCANNER_COOLDOWN_MINUTES: "45"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_TO: anthony-19951936@outlook.com
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/scan_market.py
-
-  snapshot:
-    if: github.event_name == 'schedule' && github.event.schedule == '52 20 * * *'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: daily-sandbox-trading-snapshot
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Send broker snapshot to Gmail
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/daily_snapshot.py
