@@ -1,0 +1,41 @@
+name: Sandbox market scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly at :28, weekdays 10:28-17:28 Moscow, aligned with the hourly reviewer at :29.
+    - cron: "28 7-14 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-market-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Scan and send candidates
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "false"
+          SCANNER_MAX_PER_TYPE: "1"
+          SCANNER_MAX_SIGNALS: "2"
+          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
+          SCANNER_COOLDOWN_MINUTES: "45"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_TO: anthony-19951936@outlook.com
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/scan_market.py
