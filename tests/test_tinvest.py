@@ -1,6 +1,8 @@
 import unittest
 from decimal import Decimal
 
+import requests
+
 from tradebot.tinvest import TInvestSandboxClient
 
 
@@ -33,6 +35,21 @@ class TInvestPayloadTests(unittest.TestCase):
 
         client._post = fake_post
         return client
+
+    def test_list_instruments_retries_interrupted_read_only_request(self):
+        client = object.__new__(TInvestSandboxClient)
+        attempts = {"count": 0}
+
+        def flaky_post(url, payload):
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise requests.exceptions.ChunkedEncodingError("incomplete read")
+            return {"instruments": [{"uid": "uid", "ticker": "SBER"}]}
+
+        client._post = flaky_post
+        result = client.list_instruments("share")
+        self.assertEqual(attempts["count"], 3)
+        self.assertEqual(result[0]["uid"], "uid")
 
     def test_get_instrument_by_uid_uses_full_instrument_endpoint(self):
         client = self.client()
