@@ -2,6 +2,12 @@ name: Trading scheduler hub
 
 on:
   workflow_dispatch:
+  # Temporary self-test trigger; removed after end-to-end verification.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/daily-snapshot.yml"
   schedule:
     # Daily risk baseline at 06:00 Moscow (03:00 UTC), weekdays.
     - cron: "0 3 * * 1-5"
@@ -25,7 +31,7 @@ permissions:
 
 jobs:
   catch-up:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
