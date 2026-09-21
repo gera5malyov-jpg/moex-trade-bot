@@ -2,12 +2,6 @@ name: Trading scheduler hub
 
 on:
   workflow_dispatch:
-  # Temporary self-test trigger; removed after end-to-end verification.
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/daily-snapshot.yml"
   schedule:
     # Daily risk baseline at 06:00 Moscow (03:00 UTC), weekdays.
     - cron: "0 3 * * 1-5"
@@ -18,8 +12,8 @@ on:
     - cron: "*/5 7-14 * * 1-5"
     - cron: "0,5,10,15,20,25,30,35,40,45 15 * * 1-5"
 
-    # Candidate scan hourly at :27 during the main session, five minutes before the reviewer.
-    # This is synchronized with the hourly ChatGPT reviewer fallback.
+    # Candidate scan hourly at :27 during the main session, two minutes before the reviewer.
+    # This is synchronized with the hourly ChatGPT reviewer at :29 Moscow.
     - cron: "27 7-14 * * 1-5"
 
 
@@ -35,9 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -117,8 +111,8 @@ jobs:
       group: daily-sandbox-risk-baseline
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
@@ -146,8 +140,8 @@ jobs:
       group: process-trade-commands
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
@@ -186,8 +180,8 @@ jobs:
       group: scan-market-candidates
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
@@ -215,8 +209,8 @@ jobs:
       group: daily-sandbox-trading-snapshot
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
