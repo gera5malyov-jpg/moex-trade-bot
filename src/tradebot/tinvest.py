@@ -126,10 +126,25 @@ class TInvestSandboxClient:
         else:
             payload = {"instrumentStatus": "INSTRUMENT_STATUS_BASE"}
 
-        data = self._post(
-            self.INSTRUMENTS_SERVICE + "/" + endpoint,
-            payload,
-        )
+        # Instrument catalog endpoints are read-only and some large
+        # responses (notably Options) can be interrupted mid-transfer.
+        # Retry only this read operation; never apply implicit retries to
+        # order placement endpoints, where that could duplicate an order.
+        data = None
+        last_error: requests.exceptions.RequestException | None = None
+        for _attempt in range(3):
+            try:
+                data = self._post(
+                    self.INSTRUMENTS_SERVICE + "/" + endpoint,
+                    payload,
+                )
+                break
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+        if data is None:
+            assert last_error is not None
+            raise last_error
+
         instruments = data.get("instruments") or []
         if not isinstance(instruments, list):
             raise RuntimeError("Unexpected instruments response")
