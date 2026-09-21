@@ -2,13 +2,6 @@ name: Trading scheduler hub
 
 on:
   workflow_dispatch:
-  # Temporary push trigger for immediate catch-up validation after instrument fix.
-  # It will be removed after the catch-up run is verified.
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/daily-snapshot.yml"
   schedule:
     # Daily risk baseline at 06:00 Moscow (03:00 UTC), weekdays.
     - cron: "0 3 * * 1-5"
@@ -34,7 +27,7 @@ permissions:
 
 jobs:
   catch-up:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
