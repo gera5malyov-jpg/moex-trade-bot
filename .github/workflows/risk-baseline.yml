@@ -2,11 +2,8 @@ name: Daily sandbox risk baseline
 
 on:
   workflow_dispatch:
-  schedule:
-    # 06:00 Moscow = 03:00 UTC. The baseline is taken before the intraday
-    # scanner becomes active.
-    - cron: "0 3 * * 1-5"
 
+# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
 permissions:
   contents: read
 
