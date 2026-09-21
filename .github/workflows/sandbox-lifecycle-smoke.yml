@@ -2,12 +2,8 @@ name: One-time Sandbox lifecycle smoke
 
 on:
   workflow_dispatch:
-  schedule:
-    # 10:10, 11:10 and 12:10 Moscow on 21 September, main session only.
-    # The script itself also hard-checks the year/date and exits on all
-    # other dates, so this cannot become a recurring trading workflow.
-    - cron: "10 7,8,9 21 9 *"
 
+# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
 permissions:
   contents: read
 
