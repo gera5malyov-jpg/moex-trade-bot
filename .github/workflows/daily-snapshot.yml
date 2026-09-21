@@ -69,6 +69,7 @@ jobs:
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "1"
           SCANNER_MAX_SIGNALS: "2"
+          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "45"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: anthony-19951936@outlook.com
@@ -193,6 +194,7 @@ jobs:
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "1"
           SCANNER_MAX_SIGNALS: "2"
+          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "45"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: anthony-19951936@outlook.com
