@@ -16,8 +16,6 @@ on:
     # Offset by seven minutes to avoid colliding with the 5-minute heartbeat.
     - cron: "7,22,37,52 7-14 * * 1-5"
 
-    # One-time Sandbox lifecycle readiness smoke on 21 September 2026.
-    - cron: "10 7,8,9 21 9 *"
 
     # End-of-day Sandbox snapshot at 23:52 Moscow (20:52 UTC).
     - cron: "52 20 * * *"
@@ -202,31 +200,6 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/scan_market.py
-
-  sandbox-smoke:
-    if: github.event_name == 'schedule' && github.event.schedule == '10 7,8,9 21 9 *'
-    runs-on: ubuntu-latest
-    timeout-minutes: 7
-    concurrency:
-      group: one-time-sandbox-lifecycle-smoke
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Verify actual Sandbox entry and protection
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/sandbox_lifecycle_smoke.py
 
   snapshot:
     if: github.event_name == 'schedule' && github.event.schedule == '52 20 * * *'
