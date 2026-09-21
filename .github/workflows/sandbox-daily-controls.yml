@@ -5,8 +5,9 @@ on:
   schedule:
     # 06:00 Moscow on weekdays.
     - cron: "0 3 * * 1-5"
-    # 23:52 Moscow every day.
-    - cron: "52 20 * * *"
+    # End-of-day broker snapshot: 00:05 Moscow next calendar day.
+    # The snapshot script is told to report the just-finished Moscow date.
+    - cron: "5 21 * * *"
 
 permissions:
   contents: read
@@ -38,7 +39,7 @@ jobs:
         run: python scripts/risk_baseline.py
 
   daily-snapshot:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '52 20 * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '5 21 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -56,7 +57,9 @@ jobs:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "false"
+          DAILY_SNAPSHOT_PREVIOUS_MOSCOW_DAY: "true"
           MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_TO: gera5malyov@gmail.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/daily_snapshot.py
