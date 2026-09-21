@@ -423,6 +423,21 @@ def enrich_candidate(
     uid = candidate["instrument_uid"]
     now = datetime.now(timezone.utc)
 
+    # Refresh execution-critical market data at enrichment time instead of
+    # reusing the broad-universe scanner snapshot.
+    refreshed_prices = client.get_last_prices([uid])
+    refreshed_last = (
+        quote_to_decimal(refreshed_prices[0].get("price"))
+        if refreshed_prices else Decimal("0")
+    )
+    refreshed_last_time = (
+        parse_ts(
+            refreshed_prices[0].get("time")
+            or refreshed_prices[0].get("lastPriceTs")
+            or refreshed_prices[0].get("last_price_ts")
+        )
+        if refreshed_prices else None
+    )
     order_book = client.get_order_book(uid, depth=10)
     trading_status = client.get_trading_status(uid)
     candles_1m = client.get_candles(
@@ -489,10 +504,22 @@ def enrich_candidate(
             if candidate["instrument_type"] != "dfa"
             else "DFA_SPECIAL_ANALYSIS_ONLY"
         ),
-        "last_price": str(candidate["last_price"]),
+        "last_price": str(refreshed_last if refreshed_last > 0 else candidate["last_price"]),
         "previous_close": str(candidate["close_price"]),
-        "move_percent_from_close": str(candidate["move_percent"]),
-        "last_price_time": candidate["last_price_time"].isoformat(),
+        "move_percent_from_close": str(
+            (
+                (refreshed_last - candidate["close_price"])
+                / candidate["close_price"]
+                * Decimal("100")
+            )
+            if refreshed_last > 0 and candidate["close_price"] > 0
+            else candidate["move_percent"]
+        ),
+        "last_price_time": (
+            refreshed_last_time.isoformat()
+            if refreshed_last_time is not None
+            else candidate["last_price_time"].isoformat()
+        ),
         "bid": str(best_bid) if best_bid > 0 else None,
         "ask": str(best_ask) if best_ask > 0 else None,
         "spread_percent": str(spread_pct) if spread_pct is not None else None,
