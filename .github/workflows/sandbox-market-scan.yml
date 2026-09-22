@@ -37,7 +37,7 @@ jobs:
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "20"
           MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_TO: anthony-19951936@outlook.com
+          MAIL_TO: gera5malyov+trade@gmail.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
