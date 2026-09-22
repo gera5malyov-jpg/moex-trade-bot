@@ -2,11 +2,15 @@ name: Sandbox trading heartbeat
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Sandbox market scan"]
+    types: [completed]
   schedule:
-    # Weekdays 09:45-18:45 Moscow. Avoid minute 0 where GitHub cron is busiest.
-    - cron: "45,50,55 6 * * 1-5"
-    - cron: "*/5 7-14 * * 1-5"
-    - cron: "5,10,15,20,25,30,35,40,45 15 * * 1-5"
+    # Weekdays 09:48-18:43 Moscow. Use off-grid minutes to reduce
+    # GitHub scheduler contention from common */5 cron expressions.
+    - cron: "48,53,58 6 * * 1-5"
+    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 7-14 * * 1-5"
+    - cron: "3,8,13,18,23,28,33,38,43 15 * * 1-5"
 
 permissions:
   contents: read
@@ -17,6 +21,9 @@ concurrency:
 
 jobs:
   heartbeat:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -25,6 +32,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Allow Outlook and reviewer to produce a command
+        if: github.event_name == 'workflow_run'
+        run: sleep 180
       - name: Process fresh trade commands
         env:
           PYTHONPATH: src
