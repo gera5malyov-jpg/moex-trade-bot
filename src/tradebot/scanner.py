@@ -176,7 +176,10 @@ def _eligible(item: dict[str, Any], instrument_type: str) -> bool:
     # Filter out instruments that can never become execution-capable before
     # they consume the per-type candidate budget.
     if instrument_type in {"share", "etf"}:
-        if item.get("liquidityFlag") is not True:
+        # Explicitly illiquid instruments can never pass execution_snapshot_ready.
+        # Some catalog/test payloads omit liquidityFlag, so missing remains
+        # eligible for enrichment and is rejected later unless confirmed True.
+        if item.get("liquidityFlag") is False:
             return False
         if item.get("blockedTcaFlag") is True:
             return False
