@@ -3,7 +3,7 @@ name: Sandbox market scan
 on:
   workflow_dispatch:
   schedule:
-    # Hourly at :28, weekdays 10:28-17:28 Moscow, aligned with the hourly reviewer at :29.
+    # Hourly at :28, weekdays 10:28-17:28 Moscow, with reviewer at :43 to absorb GitHub cron delays.
     - cron: "28 7-14 * * 1-5"
 
 permissions:
