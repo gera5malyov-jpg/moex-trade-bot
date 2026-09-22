@@ -171,6 +171,23 @@ def _eligible(item: dict[str, Any], instrument_type: str) -> bool:
     # DFA is a special non-exchange analysis-only class and is kept separate.
     if instrument_type != "dfa" and _real_exchange(item) != "REAL_EXCHANGE_MOEX":
         return False
+
+    # The automatic executor currently supports only long share/ETF entries.
+    # Filter out instruments that can never become execution-capable before
+    # they consume the per-type candidate budget.
+    if instrument_type in {"share", "etf"}:
+        if item.get("liquidityFlag") is not True:
+            return False
+        if item.get("blockedTcaFlag") is True:
+            return False
+        required_tests = (
+            item.get("requiredTests")
+            or item.get("required_tests")
+            or []
+        )
+        if required_tests:
+            return False
+
     return True
 
 
@@ -260,14 +277,24 @@ def scan_candidates(
                 }
             )
 
+        # The executable cash strategy is LONG-only. Prefer positive
+        # momentum candidates first, while still retaining negative movers
+        # later in the list for possible mean-reversion review.
         type_candidates.sort(
-            key=lambda x: x["score"],
+            key=lambda x: (
+                x["move_percent"] > 0,
+                x["score"],
+            ),
             reverse=True,
         )
         all_candidates.extend(type_candidates[:max_per_type])
 
     all_candidates.sort(
-        key=lambda x: x["score"],
+        key=lambda x: (
+            x["instrument_type"] in {"share", "etf"},
+            x["move_percent"] > 0,
+            x["score"],
+        ),
         reverse=True,
     )
     return all_candidates
