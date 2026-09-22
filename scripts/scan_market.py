@@ -322,9 +322,6 @@ def main():
     for candidate in ordered_candidates:
         if sent >= max_signals:
             break
-        if (candidate["instrument_type"] not in {"share", "etf"} and
-                analysis_only_sent >= analysis_only_max_signals):
-            continue
         try:
             if has_recent_signal_for_instrument(
                 imap_host=cfg.imap_host,
@@ -347,6 +344,17 @@ def main():
                 hard_risk_context=hard_risk_context,
                 sandbox_ready=sandbox_ready,
             )
+            if (
+                not execution_capability
+                and analysis_only_sent >= analysis_only_max_signals
+            ):
+                print(
+                    "Candidate skipped because execution is unavailable "
+                    "and the analysis-only signal limit is reached: "
+                    f"{candidate['ticker']}"
+                )
+                continue
+
             signal = Signal.create(
                 secret=cfg.hmac_secret,
                 ticker=candidate["ticker"],
@@ -388,7 +396,7 @@ def main():
             sent += 1
             if execution_capability:
                 executable_sent += 1
-            if candidate["instrument_type"] not in {"share", "etf"}:
+            else:
                 analysis_only_sent += 1
         except Exception as exc:
             print(
