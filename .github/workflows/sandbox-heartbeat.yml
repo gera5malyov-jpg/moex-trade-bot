@@ -34,7 +34,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Allow Outlook and reviewer to produce a command
         if: github.event_name == 'workflow_run'
-        run: sleep 180
+        run: sleep 90
       - name: Process fresh trade commands
         env:
           PYTHONPATH: src
