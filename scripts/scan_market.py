@@ -1,5 +1,8 @@
 import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -144,6 +147,16 @@ def execution_snapshot_ready(
 
 
 def main():
+    # GitHub scheduled jobs can occasionally be delayed. Guarantee that the
+    # signed daily baseline exists immediately before the first market scan.
+    # risk_baseline.py is idempotent: it exits without creating a duplicate
+    # when today's valid signed baseline is already present.
+    baseline_script = Path(__file__).with_name("risk_baseline.py")
+    subprocess.run(
+        [sys.executable, str(baseline_script)],
+        check=True,
+    )
+
     cfg = Config.from_env()
     client = TInvestSandboxClient(
         token=cfg.tinvest_token,
