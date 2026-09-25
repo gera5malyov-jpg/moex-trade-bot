@@ -205,6 +205,12 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             TradeCommand.from_dict(data)
 
+    def test_buy_rejects_event_risk_regime(self):
+        data = self._buy_command()
+        data["market_regime"] = "EVENT_RISK"
+        with self.assertRaises(ValueError):
+            TradeCommand.from_dict(data)
+
     def test_skip_requires_zero_quantity(self):
         data = self._buy_command()
         data.update(
