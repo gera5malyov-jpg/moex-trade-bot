@@ -553,6 +553,7 @@ class TradeCommand:
             if market_regime in {
                 "TREND_DOWN",
                 "HIGH_VOLATILITY",
+                "EVENT_RISK",
                 "PANIC",
             }:
                 raise ValueError(
