@@ -11,8 +11,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-MAX_REVIEW_SPREAD_PERCENT = Decimal("0.20")
-BREAKOUT_RELATIVE_VOLUME = Decimal("1.20")
+MAX_REVIEW_SPREAD_PERCENT = Decimal("0.10")
+BREAKOUT_RELATIVE_VOLUME = Decimal("1.30")
 BREAKOUT_NEAR_HIGH_FRACTION = Decimal("0.997")
 
 
