@@ -19,7 +19,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -32,7 +32,7 @@ jobs:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "false"
-          SCANNER_MAX_PER_TYPE: "6"
+          SCANNER_MAX_PER_TYPE: "4"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "20"
