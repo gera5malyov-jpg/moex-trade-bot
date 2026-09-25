@@ -522,6 +522,7 @@ class TradeCommand:
             "TREND_DOWN",
             "RANGE",
             "HIGH_VOLATILITY",
+            "EVENT_RISK",
             "PANIC",
             "UNKNOWN",
         }
