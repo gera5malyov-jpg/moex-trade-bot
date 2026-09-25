@@ -1,6 +1,6 @@
 # MOEX Trade Bot — Sandbox-only
 
-Автоматизация: GitHub Actions + T-Invest Sandbox + Outlook bridge + Gmail + ChatGPT Work.
+Автоматизация: GitHub Actions + T-Invest Sandbox + Gmail + ChatGPT Work.
 
 ## Безопасность
 
@@ -18,9 +18,7 @@
 
 ```
 GitHub scanner
-  -> Outlook (anthony-19951936@outlook.com)
-  -> automatic Outlook forward
-  -> Gmail (gera5malyov@gmail.com)
+  -> Gmail alias (gera5malyov+trade@gmail.com)
   -> ChatGPT Work reviewer
   -> Gmail [TRADE-CMD]
   -> GitHub command processor
@@ -41,7 +39,7 @@ Work reviewer читает актуальные:
 - risk baseline: по будням в 06:00 МСК;
 - scanner: по будням каждые 15 минут, 10:00–17:45 МСК; исполняемое окно жёстко 10:05–17:45 МСК;
 - command processor + lifecycle monitor: каждые 5 минут, 09:45–18:45 МСК;
-- raw daily snapshot: 23:52 МСК;
+- raw daily snapshot завершившегося дня: 00:05 МСК следующего календарного дня;
 - ChatGPT daily report: 23:59 МСК.
 
 Отдельный lifecycle workflow оставлен manual-only как аварийный/диагностический запуск.
@@ -53,6 +51,10 @@ Scanner:
 - для биржевых классов отбирает только `REAL_EXCHANGE_MOEX`;
 - DFA остаётся отдельным analysis-only специальным классом;
 - использует bulk last/close prices;
+- выполняет детерминированный strategy pre-check для SHARE/ETF: 1D режим → 1h рабочий тренд → 15m setup → 5m confirmation → 1m timing;
+- поддерживает LONG setup types: TREND_CONTINUATION / BREAKOUT / MEAN_REVERSION;
+- quality_score pre-check используется только для ранжирования и не является вероятностью прибыли;
+- pre-check отсеивает широкий spread и неблагоприятный технический режим до независимого reviewer;
 - обогащает кандидата стаканом, торговым статусом, 1m/5m/15m/1h/1D свечами, EMA9/21, RSI14, ATR14, VWAP, relative volume, realized volatility и оценкой оборота;
 - передаёт доступный RUB cash и состояние портфеля;
 - передаёт independently computed daily/weekly/monthly P&L, high-water drawdown, consecutive losses и статус торгового окна из подписанного baseline v3;
@@ -189,14 +191,12 @@ Reviewer отдельно оценивает:
 - realized lifecycle P&L journal;
 - compileall для всех `src/` и `scripts/`.
 
-Подтверждено end-to-end:
-- GitHub → Outlook;
-- автоматическое Outlook rule → Gmail plus-alias;
-- Gmail → ChatGPT Work;
+Подтвержденный транспорт сигналов:
+- GitHub → Gmail plus-alias;
+- Gmail → ChatGPT Work (требует отдельного активного Work-триггера);
 - Work → `[TRADE-CMD]`;
 - GitHub command processor → signed `[TRADE-EXEC]`.
 
-Outlook bridge сейчас работает автоматически; ручная пересылка не требуется.
 
 ## Калибровка и benchmark
 
