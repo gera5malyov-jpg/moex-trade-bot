@@ -23,6 +23,7 @@ from tradebot.risk import (
     latest_strategy_close_time,
 )
 from tradebot.scanner import enrich_candidate, scan_candidates
+from tradebot.strategy import assess_long_setup
 from tradebot.tinvest import TInvestSandboxClient
 
 
@@ -338,11 +339,17 @@ def main():
 
             context = enrich_candidate(client, candidate)
             context["hard_risk_context"] = dict(hard_risk_context)
-            execution_capability = execution_snapshot_ready(
-                candidate=candidate,
-                context=context,
-                hard_risk_context=hard_risk_context,
-                sandbox_ready=sandbox_ready,
+            strategy_precheck = assess_long_setup(context)
+            context["strategy_precheck"] = strategy_precheck
+
+            execution_capability = (
+                strategy_precheck.get("review_candidate") is True
+                and execution_snapshot_ready(
+                    candidate=candidate,
+                    context=context,
+                    hard_risk_context=hard_risk_context,
+                    sandbox_ready=sandbox_ready,
+                )
             )
             if (
                 not execution_capability
@@ -367,8 +374,12 @@ def main():
                     "SCANNER CANDIDATE ONLY — "
                     f"{candidate['instrument_type']} "
                     f"{candidate['ticker']} moved "
-                    f"{candidate['move_percent']:.4f}% from previous close. "
-                    "Requires independent ChatGPT Work review; "
+                    f"{candidate['move_percent']:.4f}% from previous close; "
+                    f"regime={strategy_precheck.get('market_regime')}; "
+                    f"setup={strategy_precheck.get('setup_type')}; "
+                    f"quality_score={strategy_precheck.get('quality_score')} "
+                    "(ranking only, not probability). "
+                    "Requires independent reviewer; "
                     f"execution_capability={execution_capability}."
                 ),
                 context=context,
