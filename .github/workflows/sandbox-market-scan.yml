@@ -3,11 +3,9 @@ name: Sandbox market scan
 on:
   workflow_dispatch:
   schedule:
-    # Every 15 minutes during the intraday entry window.
-    # Off-grid minutes reduce GitHub scheduler contention.
-    # Moscow = UTC+3: 10:07-16:52 and 17:07-17:37.
-    - cron: "7,22,37,52 7-13 * * 1-5"
-    - cron: "7,22,37 14 * * 1-5"
+    # Hourly at :07 Moscow, aligned with the reviewer at :10.
+    # This keeps the signed T-Invest snapshot fresh for the reviewer.
+    - cron: "7 7-14 * * 1-5"
 
 permissions:
   contents: read
