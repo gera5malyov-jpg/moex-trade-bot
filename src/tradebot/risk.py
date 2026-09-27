@@ -8,7 +8,7 @@ from typing import Any
 from .protocol import TradeCommand, parse_iso_utc
 
 
-RISK_PER_TRADE = Decimal("0.0025")
+RISK_PER_TRADE = Decimal("0.0020")
 DAILY_STOP = Decimal("0.0075")
 WEEKLY_STOP = Decimal("0.02")
 MONTHLY_STOP = Decimal("0.04")
