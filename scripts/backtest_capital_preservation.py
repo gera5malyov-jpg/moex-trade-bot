@@ -653,6 +653,222 @@ def split_metrics(trades: list[Trade], cutoff: datetime) -> dict[str, Any]:
     }
 
 
+def backtest_weekly_rotation(
+    client: TInvestSandboxClient,
+    universe: tuple[str, ...],
+    benchmark_bars: list[Bar],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    """Weekly top-3 relative-strength rotation with a 30% exposure ceiling."""
+    one_way_cost = ROUND_TRIP_COST / Decimal("2")
+    per_position_weight = Decimal("0.10")
+    top_n = 3
+    momentum_lookback = 60
+    rebalance_every = 5
+
+    all_bars: dict[str, list[Bar]] = {}
+    all_ind: dict[str, dict[str, list[Decimal | None]]] = {}
+    date_maps: dict[str, dict[date, int]] = {}
+
+    for query in universe:
+        try:
+            instrument = client.find_instrument(query)
+            uid = str(
+                instrument.get("uid")
+                or instrument.get("instrumentUid")
+                or ""
+            )
+            ticker = str(instrument.get("ticker") or query).upper()
+            bars = fetch_daily_history(client, uid, start, end)
+            if len(bars) < momentum_lookback + 20:
+                continue
+            all_bars[ticker] = bars
+            all_ind[ticker] = indicator_pack(bars)
+            date_maps[ticker] = {
+                bar.time.date(): i for i, bar in enumerate(bars)
+            }
+        except Exception:
+            continue
+
+    benchmark_ind = indicator_pack(benchmark_bars)
+    benchmark_idx = {
+        bar.time.date(): i for i, bar in enumerate(benchmark_bars)
+    }
+
+    capital = START_CAPITAL
+    peak = capital
+    max_drawdown = Decimal("0")
+    weights: dict[str, Decimal] = {}
+    equity_curve: list[tuple[datetime, Decimal]] = []
+    turnover_cost_total = Decimal("0")
+    rebalances = 0
+    position_days = 0
+
+    for bi in range(61, len(benchmark_bars)):
+        day_bar = benchmark_bars[bi]
+        d = day_bar.time.date()
+
+        # Apply close-to-close P&L from positions selected at the prior close.
+        if bi > 0 and weights:
+            daily_portfolio_return = Decimal("0")
+            for ticker, weight in list(weights.items()):
+                idx = date_maps.get(ticker, {}).get(d)
+                if idx is None or idx <= 0:
+                    continue
+                bars = all_bars[ticker]
+                previous = bars[idx - 1].close
+                current = bars[idx].close
+                if previous > 0:
+                    daily_portfolio_return += weight * (
+                        current / previous - Decimal("1")
+                    )
+                    position_days += 1
+            capital *= Decimal("1") + daily_portfolio_return
+
+        peak = max(peak, capital)
+        drawdown = (peak - capital) / peak if peak > 0 else Decimal("0")
+        max_drawdown = max(max_drawdown, drawdown)
+        equity_curve.append((day_bar.time, capital))
+
+        if bi % rebalance_every != 0:
+            continue
+
+        b20 = benchmark_ind["ema20"][bi]
+        b50 = benchmark_ind["ema50"][bi]
+        b50old = benchmark_ind["ema50"][bi - 10]
+        market_on = (
+            b20 is not None
+            and b50 is not None
+            and b50old is not None
+            and b20 > b50
+            and b50 > b50old
+            and day_bar.close >= b20
+        )
+
+        selected: list[str] = []
+        if market_on:
+            ranked: list[tuple[Decimal, str]] = []
+            for ticker, bars in all_bars.items():
+                idx = date_maps[ticker].get(d)
+                if idx is None or idx < momentum_lookback:
+                    continue
+                ind = all_ind[ticker]
+                e20 = ind["ema20"][idx]
+                e50 = ind["ema50"][idx]
+                e50old = ind["ema50"][idx - 10]
+                avgv = ind["avgvol20"][idx]
+                if None in (e20, e50, e50old, avgv):
+                    continue
+                assert e20 is not None and e50 is not None
+                assert e50old is not None and avgv is not None
+                bar = bars[idx]
+                momentum = (
+                    bar.close / bars[idx - momentum_lookback].close
+                    - Decimal("1")
+                )
+                turnover = avgv * bar.close
+                if (
+                    e20 > e50
+                    and e50 > e50old
+                    and bar.close >= e20
+                    and momentum > 0
+                    and turnover >= MIN_DAILY_TURNOVER_RUB
+                ):
+                    ranked.append((momentum, ticker))
+            ranked.sort(reverse=True)
+            selected = [ticker for _, ticker in ranked[:top_n]]
+
+        new_weights = {
+            ticker: per_position_weight
+            for ticker in selected
+        }
+        all_names = set(weights) | set(new_weights)
+        traded_weight = sum(
+            abs(new_weights.get(t, Decimal("0")) - weights.get(t, Decimal("0")))
+            for t in all_names
+        )
+        if traded_weight > 0:
+            cost = traded_weight * one_way_cost
+            turnover_cost_total += cost
+            capital *= Decimal("1") - cost
+        weights = new_weights
+        rebalances += 1
+
+    peak = max(peak, capital)
+    max_drawdown = max(
+        max_drawdown,
+        (peak - capital) / peak if peak > 0 else Decimal("0"),
+    )
+
+    cutoff = start + (end - start) * 0.70
+    holdout_points = [
+        (ts, eq) for ts, eq in equity_curve if ts >= cutoff
+    ]
+    if holdout_points:
+        holdout_start = holdout_points[0][1]
+        holdout_end = holdout_points[-1][1]
+        holdout_peak = holdout_start
+        holdout_dd = Decimal("0")
+        for _, eq in holdout_points:
+            holdout_peak = max(holdout_peak, eq)
+            if holdout_peak > 0:
+                holdout_dd = max(
+                    holdout_dd,
+                    (holdout_peak - eq) / holdout_peak,
+                )
+        holdout_return = (
+            holdout_end / holdout_start - Decimal("1")
+            if holdout_start > 0
+            else Decimal("0")
+        )
+    else:
+        holdout_return = Decimal("0")
+        holdout_dd = Decimal("0")
+
+    return {
+        "name": "WEEKLY_TOP3_RELATIVE_STRENGTH",
+        "parameters": {
+            "momentum_lookback_sessions": momentum_lookback,
+            "rebalance_every_sessions": rebalance_every,
+            "top_n": top_n,
+            "weight_per_position_percent": "10",
+            "max_equity_exposure_percent": "30",
+            "market_filter": "EQMX EMA20>EMA50, EMA50 rising, close>=EMA20",
+            "cash_when_market_filter_off": True,
+        },
+        "full_period": {
+            "start_capital_rub": str(START_CAPITAL),
+            "end_capital_rub": str(capital.quantize(Decimal("0.01"))),
+            "net_pnl_percent": str(
+                (
+                    (capital / START_CAPITAL - Decimal("1"))
+                    * Decimal("100")
+                ).quantize(Decimal("0.001"))
+            ),
+            "max_drawdown_percent": str(
+                (max_drawdown * Decimal("100")).quantize(Decimal("0.001"))
+            ),
+            "estimated_turnover_cost_percent_of_initial": str(
+                (turnover_cost_total * Decimal("100")).quantize(
+                    Decimal("0.001")
+                )
+            ),
+            "rebalances": rebalances,
+            "position_days": position_days,
+        },
+        "recent_holdout": {
+            "net_pnl_percent": str(
+                (holdout_return * Decimal("100")).quantize(Decimal("0.001"))
+            ),
+            "max_drawdown_percent": str(
+                (holdout_dd * Decimal("100")).quantize(Decimal("0.001"))
+            ),
+        },
+        "final_holdings": weights,
+    }
+
+
 def main() -> None:
     token = os.environ["TINVEST_TOKEN"]
     account_name = os.getenv(
@@ -794,6 +1010,14 @@ def main() -> None:
             "split": split_metrics(all_trades, cutoff),
         }
 
+    rotation_report = backtest_weekly_rotation(
+        client,
+        universe,
+        benchmark_bars,
+        start,
+        end,
+    )
+
     report = {
         "strategy_family": "CAPITAL_PRESERVATION_TREND",
         "model": "DAILY_CORE_PROXY_NO_LOOKAHEAD",
@@ -814,6 +1038,7 @@ def main() -> None:
         },
         "variants": variant_reports,
         "breakout_variants": breakout_reports,
+        "rotation_strategy": rotation_report,
         "notes": [
             "Read-only T-Invest market-data validation; no orders are placed.",
             "Market regime uses EQMX trend; entries require positive relative strength.",
