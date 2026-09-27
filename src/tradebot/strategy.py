@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-STRATEGY_VERSION = "2.1"
+STRATEGY_VERSION = "2.2"
 MAX_REVIEW_SPREAD_PERCENT = Decimal("0.08")
 MIN_DAILY_TURNOVER_RUB = Decimal("50000000")
 MIN_DAILY_ATR_PERCENT = Decimal("0.35")
@@ -88,6 +88,35 @@ def _average_turnover(frame: dict[str, Any]) -> Decimal | None:
     if close is None or average_volume is None or close <= 0 or average_volume < 0:
         return None
     return close * average_volume
+
+
+def _top5_orderbook_imbalance(context: dict[str, Any]) -> Decimal | None:
+    """Return (bid_qty - ask_qty) / total_qty for the visible top five levels."""
+    book = context.get("raw_order_book_top5")
+    if not isinstance(book, dict):
+        return None
+
+    def side_total(rows: Any) -> tuple[Decimal, int]:
+        if not isinstance(rows, list):
+            return Decimal("0"), 0
+        total = Decimal("0")
+        valid = 0
+        for row in rows[:5]:
+            if not isinstance(row, dict):
+                continue
+            quantity = _decimal(row.get("quantity"))
+            if quantity is None or quantity < 0:
+                continue
+            total += quantity
+            valid += 1
+        return total, valid
+
+    bid_total, bid_levels = side_total(book.get("bids"))
+    ask_total, ask_levels = side_total(book.get("asks"))
+    total = bid_total + ask_total
+    if bid_levels == 0 or ask_levels == 0 or total <= 0:
+        return None
+    return (bid_total - ask_total) / total
 
 
 def classify_market_regime(context: dict[str, Any]) -> str:
@@ -162,6 +191,7 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
     ]
     spread = _decimal(context.get("spread_percent"))
     regime = classify_market_regime(context)
+    orderbook_imbalance = _top5_orderbook_imbalance(context)
 
     result: dict[str, Any] = {
         "strategy_version": STRATEGY_VERSION,
@@ -171,6 +201,11 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
         "review_candidate": False,
         "quality_score": 0,
         "score_is_probability": False,
+        "orderbook_top5_imbalance": (
+            str(orderbook_imbalance)
+            if orderbook_imbalance is not None
+            else None
+        ),
         "entry_model": "TREND_PULLBACK_RECOVERY",
         "stop_model": "ATR_PLUS_STRUCTURE",
         "profit_model": "LET_WINNERS_RUN_TRAILING_EXIT",
@@ -338,7 +373,7 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
         result["reasons"].append("NO_15M_RECOVERY_CONFIRMATION")
         return result
 
-    score = 55
+    score = 50
 
     if spread <= Decimal("0.04"):
         score += 10
@@ -372,8 +407,18 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
     else:
         result["warnings"].append("5M_RELATIVE_VOLUME_WEAK")
 
+    # A single order-book snapshot is noisy and can be spoofed. Use the
+    # visible top-five imbalance only for ranking/confirmation, never as a
+    # standalone trading trigger or hard veto.
+    if orderbook_imbalance is None:
+        result["warnings"].append("ORDERBOOK_TOP5_UNAVAILABLE")
+    elif orderbook_imbalance >= Decimal("0.10"):
+        score += 5
+    elif orderbook_imbalance <= Decimal("-0.25"):
+        result["warnings"].append("ORDERBOOK_TOP5_SELL_HEAVY")
+
     result["setup_type"] = "TREND_PULLBACK"
     result["quality_score"] = min(score, 100)
     result["review_candidate"] = True
-    result["reasons"].append("QUALIFIED_CAPITAL_PRESERVATION_TREND_V2_1")
+    result["reasons"].append("QUALIFIED_CAPITAL_PRESERVATION_TREND_V2_2")
     return result
