@@ -25,7 +25,8 @@ MAX_DAILY_ATR_PERCENT = Decimal("5.0")
 MAX_EXTENSION_ATR = Decimal("1.50")
 PULLBACK_TOUCH_ATR = Decimal("0.50")
 PULLBACK_BREAK_ATR = Decimal("0.50")
-MIN_5M_RELATIVE_VOLUME = Decimal("0.60")\nMIN_RELATIVE_STRENGTH_MARGIN = Decimal("0.005")
+MIN_5M_RELATIVE_VOLUME = Decimal("0.60")
+MIN_RELATIVE_STRENGTH_MARGIN = Decimal("0.005")
 
 
 def _decimal(value: Any) -> Decimal | None:
