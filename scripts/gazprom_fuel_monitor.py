@@ -1,300 +1,296 @@
 #!/usr/bin/env python3
 import json
 import os
-import re
 import smtplib
 import ssl
-import time
-from datetime import datetime, timezone
+from datetime import datetime
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+import requests
 
-MAP_URL = "https://gpnbonus.ru/fuel/refuel-map"
-TARGET_STATION = "АЗС №17"
+BASE_URL = "https://gpnbonus.ru"
+MAP_URL = f"{BASE_URL}/fuel/refuel-map"
+LIST_URL = f"{BASE_URL}/api/stations/list"
+
+TARGET_NUMBER = "17"
+TARGET_ADDRESS_WORDS = ("москов", "46")
+TARGET_LABEL = "АЗС №17"
 TARGET_ADDRESS = "Санкт-Петербург, Московское шоссе, 46, корпус 3"
-TARGET_HINTS = ("московское", "46")
-MAIL_TO = os.environ.get("MAIL_TO", "gera5@list.ru")
+
+MAIL_TO = os.environ.get("MAIL_TO", "gera5@list.ru").strip()
 MAIL_USER = os.environ.get("MAIL_USER", "").strip()
 MAIL_APP_PASSWORD = os.environ.get("MAIL_APP_PASSWORD", "").strip()
 MAIL_SMTP_HOST = os.environ.get("MAIL_SMTP_HOST", "smtp.gmail.com").strip()
 MAIL_SMTP_PORT = int(os.environ.get("MAIL_SMTP_PORT", "465"))
 
-# Approximate location of the target area. It is only used so the official map
-# loads the relevant Saint Petersburg cluster; the final station match is done
-# strictly by station number/address.
-SPB_LAT = 59.81
-SPB_LON = 30.35
+USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36 FuelMonitor/1.0"
+)
 
-FUEL_PATTERNS = [
-    (r"\bG\s*[-–]?\s*100\b", "G-100"),
-    (r"\bG\s*[-–]?\s*95\b", "G-95"),
-    (r"\bАИ\s*[-–]?\s*100\b|(?<!\d)100(?!\d)", "100"),
-    (r"\bАИ\s*[-–]?\s*98\b|(?<!\d)98(?!\d)", "98"),
-    (r"\bАИ\s*[-–]?\s*95\b|(?<!\d)95(?!\d)", "95"),
-    (r"\bАИ\s*[-–]?\s*92\b|(?<!\d)92(?!\d)", "92"),
-    (r"\bДТ\b|\bДИЗЕЛЬ(?:НОЕ)?\b", "ДТ"),
-]
+LIST_PAYLOAD = {
+    "open": False,
+    "wash": False,
+    "AZSShopTypeID": False,
+    "services": {
+        "car": {},
+        "payment": {},
+        "person": {},
+        "station": {},
+    },
+}
 
 
 def now_msk() -> datetime:
-    return datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Moscow"))
+    return datetime.now(ZoneInfo("Europe/Moscow"))
 
 
-def normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
+def base_headers() -> dict[str, str]:
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": BASE_URL,
+        "Referer": MAP_URL,
+        "User-Agent": USER_AGENT,
+        "X-Requested-With": "XMLHttpRequest",
+    }
 
 
-def station_window(text: str) -> str:
-    low = text.lower()
-    positions = []
-    for marker in ("азс №17", "азс n17", "московское шоссе", "московское 46"):
-        p = low.find(marker)
-        if p >= 0:
-            positions.append(p)
-    if not positions:
-        return text[-5000:]
-    p = min(positions)
-    return text[max(0, p - 800): p + 3500]
+def station_number(station: dict) -> str:
+    for key in ("PNPONumber", "pnpoNumber", "number", "stationNumber"):
+        value = station.get(key)
+        if value is not None:
+            return str(value).strip()
+    return ""
 
 
-def extract_available_fuels(text: str) -> list[str]:
-    block = station_window(text)
-    # Prefer the explicit "В наличии" section from the official station card.
-    m = re.search(r"В\s+наличии\s*:\s*(.{0,1400})", block, re.I | re.S)
-    source = m.group(1) if m else block
-
-    fuels = []
-    for pattern, label in FUEL_PATTERNS:
-        if re.search(pattern, source, re.I):
-            fuels.append(label)
-
-    # Guard against accidentally treating timestamps/prices as fuel grades.
-    # Keep numeric grades only when the surrounding text looks like a fuel list.
-    if not m:
-        contextual = re.search(
-            r"(топлив|в наличии|бензин|дт|g[-\s]?95|аи[-\s]?\d{2,3})",
-            source,
-            re.I,
-        )
-        if not contextual:
-            fuels = [f for f in fuels if f in ("G-95", "G-100", "ДТ")]
-
-    order = ["G-100", "G-95", "100", "98", "95", "92", "ДТ"]
-    return [x for x in order if x in fuels]
-
-
-def target_visible(text: str) -> bool:
-    low = text.lower()
-    return (
-        ("азс №17" in low or "азс n17" in low)
-        and "москов" in low
-        and "46" in low
-    ) or ("московское шоссе" in low and "46" in low and "азс" in low)
-
-
-def candidate_from_json(obj) -> str | None:
-    try:
-        dumped = json.dumps(obj, ensure_ascii=False)
-    except Exception:
-        return None
-    low = dumped.lower()
-    if "москов" not in low or "46" not in low:
-        return None
-    if "азс" not in low and "station" not in low:
-        return None
-    return dumped
-
-
-def read_network_candidates(driver) -> list[str]:
-    found = []
-    try:
-        logs = driver.get_log("performance")
-    except Exception:
-        return found
-
-    for entry in logs:
-        try:
-            msg = json.loads(entry["message"])["message"]
-            if msg.get("method") != "Network.responseReceived":
-                continue
-            params = msg.get("params", {})
-            resp = params.get("response", {})
-            mime = (resp.get("mimeType") or "").lower()
-            if "json" not in mime and "javascript" not in mime and "text" not in mime:
-                continue
-            request_id = params.get("requestId")
-            if not request_id:
-                continue
-            body_obj = driver.execute_cdp_cmd(
-                "Network.getResponseBody", {"requestId": request_id}
-            )
-            body = body_obj.get("body", "")
-            if not body or len(body) > 5_000_000:
-                continue
-            low = body.lower()
-            if "москов" in low and "46" in low:
-                found.append(body)
-        except Exception:
-            continue
-    return found
-
-
-def click_search_result(driver):
-    # Try any visible input; the site has changed its markup before, so avoid
-    # relying on one brittle CSS class.
-    inputs = driver.find_elements(By.CSS_SELECTOR, "input")
-    query = "Московское шоссе 46"
-    for el in inputs:
-        try:
-            if not el.is_displayed() or not el.is_enabled():
-                continue
-            placeholder = (el.get_attribute("placeholder") or "").lower()
-            aria = (el.get_attribute("aria-label") or "").lower()
-            typ = (el.get_attribute("type") or "").lower()
-            if any(k in placeholder + " " + aria for k in ("поиск", "адрес", "азс")) or typ in ("search", "text", ""):
-                el.clear()
-                el.send_keys(query)
-                el.send_keys(Keys.ENTER)
-                time.sleep(4)
-                break
-        except Exception:
-            continue
-
-    # Click the smallest visible element that contains the exact target address.
-    candidates = driver.find_elements(
-        By.XPATH,
-        "//*[contains(translate(normalize-space(.), 'МОСКОВСКОЕ', 'московское'), 'московское') and contains(normalize-space(.), '46')]",
+def station_text(station: dict) -> str:
+    fields = (
+        station.get("name"),
+        station.get("address"),
+        station.get("city"),
+        station.get("title"),
     )
-    ranked = []
-    for el in candidates:
-        try:
-            if not el.is_displayed():
-                continue
-            txt = normalize(el.text)
-            if not txt or len(txt) > 260:
-                continue
-            score = 0
-            low = txt.lower()
-            if "московское шоссе" in low:
-                score += 5
-            if "46" in low:
-                score += 3
-            if "санкт" in low:
-                score += 2
-            ranked.append((score, len(txt), el))
-        except Exception:
+    return " ".join(str(v or "") for v in fields).lower()
+
+
+def station_id(station: dict) -> str:
+    for key in ("GPNAZSID", "id", "stationId"):
+        value = station.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def choose_target(stations: list[dict]) -> dict:
+    exact = []
+    address_matches = []
+
+    for station in stations:
+        if not isinstance(station, dict):
             continue
-    if ranked:
-        ranked.sort(key=lambda x: (-x[0], x[1]))
-        try:
-            driver.execute_script("arguments[0].click();", ranked[0][2])
-            time.sleep(4)
-        except Exception:
-            pass
+        text = station_text(station)
+        address_ok = all(word in text for word in TARGET_ADDRESS_WORDS)
+        number_ok = station_number(station) == TARGET_NUMBER
 
+        if number_ok and address_ok:
+            exact.append(station)
+        elif address_ok:
+            address_matches.append(station)
 
-def scrape_official_map() -> tuple[list[str], str, str]:
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=430,1200")
-    options.add_argument("--lang=ru-RU")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-    )
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-
-    driver = webdriver.Chrome(options=options)
-    try:
-        driver.execute_cdp_cmd("Network.enable", {})
-        driver.execute_cdp_cmd(
-            "Emulation.setGeolocationOverride",
-            {"latitude": SPB_LAT, "longitude": SPB_LON, "accuracy": 100},
-        )
-        driver.execute_cdp_cmd(
-            "Browser.grantPermissions",
-            {"origin": "https://gpnbonus.ru", "permissions": ["geolocation"]},
-        )
-
-        driver.set_page_load_timeout(60)
-        driver.get(MAP_URL)
-        time.sleep(8)
-
-        # Dismiss common cookie/consent buttons if present.
-        for label in ("Принять", "Согласен", "Понятно", "Хорошо"):
-            try:
-                elems = driver.find_elements(By.XPATH, f"//*[normalize-space(text())='{label}']")
-                for el in elems:
-                    if el.is_displayed():
-                        driver.execute_script("arguments[0].click();", el)
-                        time.sleep(1)
-                        raise StopIteration
-            except StopIteration:
-                break
-            except Exception:
-                pass
-
-        click_search_result(driver)
-
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        network = read_network_candidates(driver)
-
-        # If station card is already visible, prefer it.
-        if target_visible(body_text):
-            fuels = extract_available_fuels(body_text)
-            if fuels:
-                return fuels, normalize(station_window(body_text)), MAP_URL
-
-        # Otherwise inspect relevant JSON/text responses loaded by the official map.
-        for raw in network:
-            try:
-                obj = json.loads(raw)
-                candidate = candidate_from_json(obj)
-            except Exception:
-                candidate = raw if ("москов" in raw.lower() and "46" in raw.lower()) else None
-            if not candidate:
-                continue
-            fuels = extract_available_fuels(candidate)
-            if fuels:
-                return fuels, normalize(candidate[:4000]), MAP_URL
-
-        # Last DOM attempt: click any visible AZS №17 label and re-read.
-        for xpath in (
-            "//*[contains(normalize-space(.), 'АЗС №17')]",
-            "//*[contains(normalize-space(.), 'АЗС N17')]",
-        ):
-            try:
-                els = driver.find_elements(By.XPATH, xpath)
-                els = [e for e in els if e.is_displayed() and len(normalize(e.text)) < 300]
-                if els:
-                    driver.execute_script("arguments[0].click();", els[0])
-                    time.sleep(3)
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    fuels = extract_available_fuels(body_text)
-                    if target_visible(body_text) and fuels:
-                        return fuels, normalize(station_window(body_text)), MAP_URL
-            except Exception:
-                pass
-
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
         raise RuntimeError(
-            "Официальная карта открылась, но карточка АЗС №17 по адресу "
-            "Московское шоссе, 46 к3 не была уверенно распознана."
+            f"Найдено несколько АЗС №{TARGET_NUMBER} с адресом Московское шоссе 46; "
+            "отказываюсь выбирать наугад."
         )
-    finally:
-        driver.quit()
+    if len(address_matches) == 1:
+        # Address is sufficiently specific; keep this fallback in case the public
+        # list stops exposing PNPONumber but continues exposing the address.
+        return address_matches[0]
+
+    raise RuntimeError(
+        "Целевая АЗС №17 (Санкт-Петербург, Московское шоссе, 46 к3) "
+        "не найдена однозначно в списке Газпромнефть."
+    )
 
 
-def send_email(subject: str, body: str):
+def bootstrap_session(session: requests.Session) -> None:
+    # A normal same-origin page load may provide session cookies. Failure here is
+    # not fatal: the API sometimes works without it.
+    try:
+        session.get(
+            MAP_URL,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept-Language": "ru-RU,ru;q=0.9",
+            },
+            timeout=(10, 20),
+        )
+    except requests.RequestException:
+        pass
+
+
+def fetch_station_detail() -> tuple[dict, dict]:
+    session = requests.Session()
+    session.headers.update(base_headers())
+    bootstrap_session(session)
+
+    response = session.post(
+        LIST_URL,
+        json=LIST_PAYLOAD,
+        timeout=(15, 45),
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    stations = payload.get("stations", [])
+    if not isinstance(stations, list):
+        raise RuntimeError("Ответ /api/stations/list не содержит массива stations.")
+
+    target = choose_target(stations)
+    sid = station_id(target)
+    if not sid:
+        raise RuntimeError("У целевой АЗС отсутствует GPNAZSID/id.")
+
+    detail_response = session.post(
+        f"{BASE_URL}/api/stations/{sid}",
+        data=b"",
+        headers={"Content-Type": "application/json"},
+        timeout=(15, 45),
+    )
+    detail_response.raise_for_status()
+    detail = detail_response.json()
+    return target, detail
+
+
+def normalize_fuel_name(product: dict) -> str:
+    raw = str(
+        product.get("shortTitle")
+        or product.get("title")
+        or product.get("name")
+        or ""
+    ).strip()
+    upper = raw.upper().replace(" ", "")
+
+    aliases = {
+        "АИ92": "92",
+        "АИ-92": "92",
+        "92": "92",
+        "АИ95": "95",
+        "АИ-95": "95",
+        "95": "95",
+        "АИ98": "98",
+        "АИ-98": "98",
+        "98": "98",
+        "АИ100": "100",
+        "АИ-100": "100",
+        "100": "100",
+        "G95": "G-95",
+        "G-95": "G-95",
+        "G100": "G-100",
+        "G-100": "G-100",
+        "ДТ": "ДТ",
+        "ДТЛ": "ДТ",
+        "ДИЗЕЛЬ": "ДТ",
+        "ДИЗЕЛЬНОЕТОПЛИВО": "ДТ",
+    }
+    return aliases.get(upper, raw or "Неизвестное топливо")
+
+
+def parse_fuels(detail: dict) -> list[dict]:
+    items = detail.get("data", [])
+    if not isinstance(items, list):
+        raise RuntimeError("Карточка АЗС не содержит массива data.")
+
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        product = item.get("product") or {}
+        if isinstance(product, list):
+            product = product[0] if product else {}
+        if not isinstance(product, dict):
+            product = {}
+
+        rest = item.get("rest") or {}
+        if isinstance(rest, list):
+            rest = rest[0] if rest else {}
+        if not isinstance(rest, dict):
+            rest = {}
+
+        price = item.get("price") or {}
+        if isinstance(price, list):
+            price = price[0] if price else {}
+        if not isinstance(price, dict):
+            price = {}
+
+        name = normalize_fuel_name(product)
+        available = bool(rest.get("avail"))
+        delivery = rest.get("delivery")
+        expected = delivery not in (None, False, "", "no", "NO", 0, "0")
+        price_value = price.get("price")
+        price_since = price.get("since")
+
+        result.append(
+            {
+                "name": name,
+                "available": available,
+                "expected": expected,
+                "price": price_value,
+                "price_since": price_since,
+            }
+        )
+
+    if not result:
+        raise RuntimeError("Карточка АЗС получена, но список видов топлива пуст.")
+    return result
+
+
+def format_report(target: dict, fuels: list[dict]) -> tuple[str, str]:
+    checked = now_msk().strftime("%d.%m.%Y %H:%M:%S МСК")
+    available = [x["name"] for x in fuels if x["available"]]
+    expected = [x["name"] for x in fuels if (not x["available"] and x["expected"])]
+    absent = [x["name"] for x in fuels if (not x["available"] and not x["expected"])]
+
+    subject_fuels = ", ".join(available) if available else "топлива нет"
+    subject = f"АЗС №17 — в наличии: {subject_fuels}"
+
+    lines = [
+        TARGET_LABEL,
+        TARGET_ADDRESS,
+        "",
+        f"Проверено: {checked}",
+        f"В наличии: {', '.join(available) if available else 'нет'}",
+    ]
+    if expected:
+        lines.append(f"Ожидается поставка: {', '.join(expected)}")
+    if absent:
+        lines.append(f"Нет в наличии: {', '.join(absent)}")
+
+    priced = []
+    for fuel in fuels:
+        if fuel["price"] not in (None, ""):
+            priced.append(f'{fuel["name"]}: {fuel["price"]} ₽')
+    if priced:
+        lines.extend(["", "Цены по источнику:", *priced])
+
+    sid = station_id(target)
+    if sid:
+        lines.extend(["", f"ID Газпромнефть: {sid}"])
+
+    lines.extend(["Источник: официальные данные карты АЗС Газпромнефть", MAP_URL])
+    return subject, "\n".join(lines)
+
+
+def send_email(subject: str, body: str) -> None:
     if not MAIL_USER or not MAIL_APP_PASSWORD:
-        raise RuntimeError("MAIL_USER/MAIL_APP_PASSWORD are not configured in GitHub Actions secrets.")
+        raise RuntimeError(
+            "MAIL_USER/MAIL_APP_PASSWORD не настроены в окружении."
+        )
 
     msg = EmailMessage()
     msg["From"] = MAIL_USER
@@ -303,40 +299,35 @@ def send_email(subject: str, body: str):
     msg.set_content(body)
 
     context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(MAIL_SMTP_HOST, MAIL_SMTP_PORT, context=context, timeout=30) as smtp:
+    with smtplib.SMTP_SSL(
+        MAIL_SMTP_HOST,
+        MAIL_SMTP_PORT,
+        context=context,
+        timeout=30,
+    ) as smtp:
         smtp.login(MAIL_USER, MAIL_APP_PASSWORD)
         smtp.send_message(msg)
 
 
-def main():
-    checked = now_msk()
-    stamp = checked.strftime("%d.%m.%Y %H:%M МСК")
+def main() -> None:
     try:
-        fuels, raw, source = scrape_official_map()
-        fuel_text = ", ".join(fuels)
-        subject = f"АЗС №17 — в наличии: {fuel_text}"
-        body = (
-            f"{TARGET_STATION}\n"
-            f"{TARGET_ADDRESS}\n\n"
-            f"Проверено: {stamp}\n"
-            f"В наличии: {fuel_text}\n"
-            f"Источник: официальная онлайн-карта Газпромнефть\n"
-            f"{source}\n\n"
-            f"Фрагмент карточки/ответа:\n{raw[:1800]}\n"
-        )
-        print(f"OK {stamp}: {fuel_text}")
+        target, detail = fetch_station_detail()
+        fuels = parse_fuels(detail)
+        subject, body = format_report(target, fuels)
+        print(body)
+        send_email(subject, body)
     except Exception as exc:
-        subject = "АЗС №17 — не удалось получить наличие топлива"
+        checked = now_msk().strftime("%d.%m.%Y %H:%M:%S МСК")
+        subject = "АЗС №17 — ошибка проверки топлива"
         body = (
-            f"{TARGET_STATION}\n"
-            f"{TARGET_ADDRESS}\n\n"
-            f"Проверено: {stamp}\n"
-            f"Ошибка парсера: {type(exc).__name__}: {exc}\n"
-            f"Источник: {MAP_URL}\n"
+            f"{TARGET_LABEL}\n{TARGET_ADDRESS}\n\n"
+            f"Проверено: {checked}\n"
+            f"Ошибка: {type(exc).__name__}: {exc}\n"
+            "Данные о наличии топлива не подменялись и не угадывались."
         )
         print(body)
-
-    send_email(subject, body)
+        send_email(subject, body)
+        raise
 
 
 if __name__ == "__main__":
