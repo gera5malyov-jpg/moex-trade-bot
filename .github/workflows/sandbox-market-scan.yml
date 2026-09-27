@@ -3,7 +3,7 @@ name: Sandbox market scan
 on:
   workflow_dispatch:
   schedule:
-    # Hourly at :07 Moscow, aligned with the reviewer at :10.
+    # Hourly at :07 Moscow, aligned with the reviewer at :13.
     # This keeps the signed T-Invest snapshot fresh for the reviewer.
     - cron: "7 7-14 * * 1-5"
 
@@ -30,7 +30,7 @@ jobs:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "false"
-          SCANNER_MAX_PER_TYPE: "4"
+          SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "20"
