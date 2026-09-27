@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from tradebot.scanner import _eligible, atr, ema, rsi, vwap
+from tradebot.scanner import _candle_summary, _eligible, atr, ema, rsi, vwap
 
 
 def q(value: str):
@@ -35,6 +35,27 @@ class ScannerMathTests(unittest.TestCase):
             )
         self.assertIsNotNone(atr(candles, 14))
         self.assertIsNotNone(vwap(candles))
+
+    def test_candle_summary_contains_v2_trend_fields(self):
+        candles = []
+        for i in range(1, 70):
+            candles.append(
+                {
+                    "open": q(str(i)),
+                    "high": q(str(i + 1)),
+                    "low": q(str(max(i - 1, 1))),
+                    "close": q(str(i) + ".5"),
+                    "volume": "1000",
+                    "isComplete": True,
+                }
+            )
+        summary = _candle_summary(candles)
+        self.assertEqual(summary["candles_count"], 69)
+        self.assertIsNotNone(summary["ema20"])
+        self.assertIsNotNone(summary["ema50"])
+        self.assertIsNotNone(summary["recent_high_5"])
+        self.assertIsNotNone(summary["recent_low_5"])
+        self.assertIsNotNone(summary["last_low"])
 
     def test_exchange_candidates_are_moex_only(self):
         base = {
