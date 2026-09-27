@@ -53,6 +53,8 @@ class ScannerMathTests(unittest.TestCase):
         self.assertEqual(summary["candles_count"], 69)
         self.assertIsNotNone(summary["ema20"])
         self.assertIsNotNone(summary["ema50"])
+        self.assertIsNotNone(summary["ema50_10_ago"])
+        self.assertIsNotNone(summary["return_20"])
         self.assertIsNotNone(summary["recent_high_5"])
         self.assertIsNotNone(summary["recent_low_5"])
         self.assertIsNotNone(summary["last_low"])
