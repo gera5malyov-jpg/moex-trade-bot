@@ -1,8 +1,14 @@
-"""Deterministic pre-review strategy for Sandbox share/ETF candidates.
+"""Capital Preservation Trend v2.
 
-This module does not execute trades and does not estimate a probability of profit.
-It only classifies market regime/setup and decides whether a candidate is worth
-sending to the independent reviewer.
+Deterministic pre-review strategy for T-Invest Sandbox share/ETF candidates.
+
+Design goals:
+- capital preservation first;
+- one coherent edge: long trend + controlled pullback + recovery;
+- avoid chasing large moves;
+- use 1D/1h for thesis, 15m for confirmation and 5m for execution quality;
+- 1m is intentionally not part of the decision;
+- quality_score is ranking metadata, never a probability of profit.
 """
 
 from __future__ import annotations
@@ -11,9 +17,15 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-MAX_REVIEW_SPREAD_PERCENT = Decimal("0.10")
-BREAKOUT_RELATIVE_VOLUME = Decimal("1.30")
-BREAKOUT_NEAR_HIGH_FRACTION = Decimal("0.997")
+STRATEGY_VERSION = "2"
+MAX_REVIEW_SPREAD_PERCENT = Decimal("0.08")
+MIN_DAILY_TURNOVER_RUB = Decimal("50000000")
+MIN_DAILY_ATR_PERCENT = Decimal("0.35")
+MAX_DAILY_ATR_PERCENT = Decimal("5.0")
+MAX_EXTENSION_ATR = Decimal("1.50")
+PULLBACK_TOUCH_ATR = Decimal("0.50")
+PULLBACK_BREAK_ATR = Decimal("0.50")
+MIN_5M_RELATIVE_VOLUME = Decimal("0.60")
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -33,100 +45,144 @@ def _frame(context: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _required_frame_complete(frame: dict[str, Any]) -> bool:
     required = (
-        "ema9",
-        "ema21",
+        "ema20",
+        "ema50",
         "rsi14",
         "atr14",
         "vwap",
         "relative_volume",
+        "average_volume_20",
         "last_close",
-        "recent_high",
-        "recent_low",
+        "recent_high_5",
+        "recent_low_5",
     )
-    if int(frame.get("candles_count") or 0) < 22:
+    if int(frame.get("candles_count") or 0) < 50:
         return False
     return all(_decimal(frame.get(key)) is not None for key in required)
 
 
-def _ema_direction(frame: dict[str, Any]) -> int:
-    fast = _decimal(frame.get("ema9"))
-    slow = _decimal(frame.get("ema21"))
-    if fast is None or slow is None:
-        return 0
-    if fast > slow:
-        return 1
-    if fast < slow:
-        return -1
-    return 0
+def _ema20_above_ema50(frame: dict[str, Any]) -> bool:
+    fast = _decimal(frame.get("ema20"))
+    slow = _decimal(frame.get("ema50"))
+    return fast is not None and slow is not None and fast > slow
 
 
-def _above_vwap(frame: dict[str, Any]) -> bool:
+def _close_above(frame: dict[str, Any], field: str) -> bool:
     close = _decimal(frame.get("last_close"))
-    vwap = _decimal(frame.get("vwap"))
-    return close is not None and vwap is not None and close >= vwap
+    level = _decimal(frame.get(field))
+    return close is not None and level is not None and close >= level
+
+
+def _atr_percent(frame: dict[str, Any]) -> Decimal | None:
+    close = _decimal(frame.get("last_close"))
+    atr14 = _decimal(frame.get("atr14"))
+    if close is None or atr14 is None or close <= 0 or atr14 <= 0:
+        return None
+    return atr14 / close * Decimal("100")
+
+
+def _average_turnover(frame: dict[str, Any]) -> Decimal | None:
+    close = _decimal(frame.get("last_close"))
+    average_volume = _decimal(frame.get("average_volume_20"))
+    if close is None or average_volume is None or close <= 0 or average_volume < 0:
+        return None
+    return close * average_volume
 
 
 def classify_market_regime(context: dict[str, Any]) -> str:
-    """Classify technical regime only; EVENT_RISK is assigned by news review."""
+    """Classify the instrument trend regime using 1D and 1h only."""
     daily = _frame(context, "technical_1d")
     hourly = _frame(context, "technical_1h")
     if not (_required_frame_complete(daily) and _required_frame_complete(hourly)):
         return "UNKNOWN"
 
-    daily_dir = _ema_direction(daily)
-    hourly_dir = _ema_direction(hourly)
+    daily_atr_pct = _atr_percent(daily)
+    hourly_atr_pct = _atr_percent(hourly)
+    if daily_atr_pct is None or hourly_atr_pct is None:
+        return "UNKNOWN"
+    if daily_atr_pct >= MAX_DAILY_ATR_PERCENT or hourly_atr_pct >= Decimal("3.0"):
+        return "HIGH_VOLATILITY"
 
-    daily_close = _decimal(daily.get("last_close"))
-    daily_atr = _decimal(daily.get("atr14"))
-    hourly_close = _decimal(hourly.get("last_close"))
-    hourly_atr = _decimal(hourly.get("atr14"))
-    if all(v is not None and v > 0 for v in (daily_close, daily_atr, hourly_close, hourly_atr)):
-        daily_atr_pct = daily_atr / daily_close * Decimal("100")
-        hourly_atr_pct = hourly_atr / hourly_close * Decimal("100")
-        # Deliberately conservative anomaly gate, not an optimized trading threshold.
-        if daily_atr_pct >= Decimal("4.0") or hourly_atr_pct >= Decimal("2.0"):
-            return "HIGH_VOLATILITY"
-
-    if daily_dir > 0 and hourly_dir > 0:
+    daily_up = (
+        _ema20_above_ema50(daily)
+        and _close_above(daily, "ema20")
+        and _close_above(daily, "ema50")
+    )
+    hourly_up = (
+        _ema20_above_ema50(hourly)
+        and _close_above(hourly, "ema50")
+    )
+    if daily_up and hourly_up:
         return "TREND_UP"
-    if daily_dir < 0 and hourly_dir < 0:
-        return "TREND_DOWN"
+
+    daily_fast = _decimal(daily.get("ema20"))
+    daily_slow = _decimal(daily.get("ema50"))
+    hourly_fast = _decimal(hourly.get("ema20"))
+    hourly_slow = _decimal(hourly.get("ema50"))
+    daily_close = _decimal(daily.get("last_close"))
+    hourly_close = _decimal(hourly.get("last_close"))
+    if all(
+        x is not None
+        for x in (
+            daily_fast,
+            daily_slow,
+            hourly_fast,
+            hourly_slow,
+            daily_close,
+            hourly_close,
+        )
+    ):
+        if (
+            daily_fast < daily_slow
+            and daily_close < daily_fast
+            and hourly_fast < hourly_slow
+            and hourly_close < hourly_fast
+        ):
+            return "TREND_DOWN"
+
     return "RANGE"
 
 
 def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
-    """Return deterministic triage metadata for an independent LONG reviewer.
-
-    quality_score is a ranking score, not a probability or expected return.
-    """
+    """Assess a single long setup: established trend -> pullback -> recovery."""
     frames = {
         name: _frame(context, name)
         for name in (
-            "technical_1m",
             "technical_5m",
             "technical_15m",
             "technical_1h",
             "technical_1d",
         )
     }
-    missing = [name for name, frame in frames.items() if not _required_frame_complete(frame)]
+    missing = [
+        name
+        for name, frame in frames.items()
+        if not _required_frame_complete(frame)
+    ]
     spread = _decimal(context.get("spread_percent"))
     regime = classify_market_regime(context)
 
     result: dict[str, Any] = {
-        "strategy_version": "1",
+        "strategy_version": STRATEGY_VERSION,
+        "strategy_name": "CAPITAL_PRESERVATION_TREND",
         "market_regime": regime,
         "setup_type": "NONE",
         "review_candidate": False,
         "quality_score": 0,
         "score_is_probability": False,
+        "entry_model": "TREND_PULLBACK_RECOVERY",
+        "stop_model": "ATR_PLUS_STRUCTURE",
+        "profit_model": "LET_WINNERS_RUN_TRAILING_EXIT",
         "reasons": [],
         "warnings": [],
     }
 
     if missing:
-        result["reasons"].append("INCOMPLETE_TECHNICAL_CONTEXT:" + ",".join(missing))
+        result["reasons"].append(
+            "INCOMPLETE_TECHNICAL_CONTEXT:" + ",".join(missing)
+        )
         return result
+
     if spread is None or spread < 0:
         result["reasons"].append("SPREAD_UNAVAILABLE")
         return result
@@ -135,103 +191,134 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
             f"SPREAD_TOO_WIDE:{spread}>{MAX_REVIEW_SPREAD_PERCENT}"
         )
         return result
-    if regime in {"TREND_DOWN", "HIGH_VOLATILITY", "UNKNOWN"}:
-        result["reasons"].append(f"REGIME_NOT_LONG_FRIENDLY:{regime}")
+    if regime != "TREND_UP":
+        result["reasons"].append(f"REGIME_NOT_TREND_UP:{regime}")
         return result
 
-    one = frames["technical_1m"]
     five = frames["technical_5m"]
     fifteen = frames["technical_15m"]
     hour = frames["technical_1h"]
     day = frames["technical_1d"]
 
-    score = 0
-    if regime == "TREND_UP":
-        score += 30
-    elif regime == "RANGE":
-        score += 10
+    turnover = _average_turnover(day)
+    if turnover is None:
+        result["reasons"].append("DAILY_TURNOVER_UNAVAILABLE")
+        return result
+    if turnover < MIN_DAILY_TURNOVER_RUB:
+        result["reasons"].append(
+            f"DAILY_TURNOVER_TOO_LOW:{turnover}<{MIN_DAILY_TURNOVER_RUB}"
+        )
+        return result
 
-    if _ema_direction(fifteen) > 0:
-        score += 15
-    if _ema_direction(five) > 0:
-        score += 15
-    if _above_vwap(fifteen):
-        score += 10
-    if _above_vwap(five):
+    daily_atr_pct = _atr_percent(day)
+    if daily_atr_pct is None:
+        result["reasons"].append("DAILY_ATR_UNAVAILABLE")
+        return result
+    if daily_atr_pct < MIN_DAILY_ATR_PERCENT:
+        result["reasons"].append(
+            f"DAILY_VOLATILITY_TOO_LOW:{daily_atr_pct}"
+        )
+        return result
+    if daily_atr_pct >= MAX_DAILY_ATR_PERCENT:
+        result["reasons"].append(
+            f"DAILY_VOLATILITY_TOO_HIGH:{daily_atr_pct}"
+        )
+        return result
+
+    day_close = _decimal(day.get("last_close"))
+    day_ema20 = _decimal(day.get("ema20"))
+    day_atr = _decimal(day.get("atr14"))
+    assert day_close is not None and day_ema20 is not None and day_atr is not None
+    if day_close > day_ema20 + MAX_EXTENSION_ATR * day_atr:
+        result["reasons"].append("DAILY_PRICE_OVEREXTENDED")
+        return result
+
+    hour_close = _decimal(hour.get("last_close"))
+    hour_ema20 = _decimal(hour.get("ema20"))
+    hour_ema50 = _decimal(hour.get("ema50"))
+    hour_atr = _decimal(hour.get("atr14"))
+    hour_low5 = _decimal(hour.get("recent_low_5"))
+    assert all(
+        x is not None
+        for x in (hour_close, hour_ema20, hour_ema50, hour_atr, hour_low5)
+    )
+
+    touched_pullback = (
+        hour_low5 <= hour_ema20 + PULLBACK_TOUCH_ATR * hour_atr
+    )
+    held_trend_structure = (
+        hour_low5 >= hour_ema50 - PULLBACK_BREAK_ATR * hour_atr
+    )
+    recovered_hourly = hour_close >= hour_ema20
+
+    if not touched_pullback:
+        result["reasons"].append("NO_RECENT_PULLBACK_TO_1H_EMA20")
+        return result
+    if not held_trend_structure:
+        result["reasons"].append("PULLBACK_BROKE_1H_TREND_STRUCTURE")
+        return result
+    if not recovered_hourly:
+        result["reasons"].append("1H_PULLBACK_NOT_RECOVERED")
+        return result
+
+    fifteen_close = _decimal(fifteen.get("last_close"))
+    fifteen_ema20 = _decimal(fifteen.get("ema20"))
+    fifteen_ema50 = _decimal(fifteen.get("ema50"))
+    fifteen_vwap = _decimal(fifteen.get("vwap"))
+    assert all(
+        x is not None
+        for x in (
+            fifteen_close,
+            fifteen_ema20,
+            fifteen_ema50,
+            fifteen_vwap,
+        )
+    )
+    recovered_15m = (
+        fifteen_ema20 >= fifteen_ema50
+        and fifteen_close >= fifteen_ema20
+        and fifteen_close >= fifteen_vwap
+    )
+    if not recovered_15m:
+        result["reasons"].append("NO_15M_RECOVERY_CONFIRMATION")
+        return result
+
+    score = 55
+
+    if spread <= Decimal("0.04"):
         score += 10
 
     rsi15 = _decimal(fifteen.get("rsi14"))
-    rsi5 = _decimal(five.get("rsi14"))
+    if rsi15 is not None and Decimal("45") <= rsi15 <= Decimal("70"):
+        score += 10
+    elif rsi15 is not None and rsi15 > Decimal("78"):
+        result["warnings"].append("15M_RSI_OVERHEATED")
+
+    rv15 = _decimal(fifteen.get("relative_volume"))
+    if rv15 is not None and rv15 >= Decimal("0.80"):
+        score += 10
+    elif rv15 is not None and rv15 < Decimal("0.50"):
+        result["warnings"].append("15M_VOLUME_WEAK")
+
+    five_close = _decimal(five.get("last_close"))
+    five_vwap = _decimal(five.get("vwap"))
     rv5 = _decimal(five.get("relative_volume"))
-    close15 = _decimal(fifteen.get("last_close"))
-    high15 = _decimal(fifteen.get("recent_high"))
-
-    trend_continuation = (
-        regime == "TREND_UP"
-        and _ema_direction(day) > 0
-        and _ema_direction(hour) > 0
-        and _ema_direction(fifteen) > 0
-        and _ema_direction(five) >= 0
-        and _above_vwap(fifteen)
-        and _above_vwap(five)
-        and rsi15 is not None
-        and Decimal("45") <= rsi15 <= Decimal("75")
-        and rsi5 is not None
-        and Decimal("40") <= rsi5 <= Decimal("78")
-        and rv5 is not None
-        and rv5 >= Decimal("0.70")
-    )
-
-    breakout = (
-        regime in {"TREND_UP", "RANGE"}
-        and _ema_direction(fifteen) >= 0
-        and _ema_direction(five) > 0
-        and _above_vwap(fifteen)
-        and _above_vwap(five)
-        and rv5 is not None
-        and rv5 >= BREAKOUT_RELATIVE_VOLUME
-        and close15 is not None
-        and high15 is not None
-        and high15 > 0
-        and close15 >= high15 * BREAKOUT_NEAR_HIGH_FRACTION
-    )
-
-    mean_reversion = (
-        regime in {"TREND_UP", "RANGE"}
-        and rsi15 is not None
-        and rsi15 <= Decimal("42")
-        and rsi5 is not None
-        and Decimal("35") <= rsi5 <= Decimal("60")
-        and _ema_direction(five) > 0
-        and _above_vwap(five)
-        and _ema_direction(hour) >= 0
-    )
-
-    if breakout:
-        result["setup_type"] = "BREAKOUT"
-        score += 20
-    elif trend_continuation:
-        result["setup_type"] = "TREND_CONTINUATION"
-        score += 20
-    elif mean_reversion:
-        result["setup_type"] = "MEAN_REVERSION"
-        score += 15
+    if (
+        five_close is not None
+        and five_vwap is not None
+        and five_close >= five_vwap
+    ):
+        score += 10
     else:
-        result["reasons"].append("NO_CONFIRMED_15M_5M_LONG_SETUP")
-        # 1m is deliberately not a hard veto; it only informs timing.
-        if _ema_direction(one) < 0 or not _above_vwap(one):
-            result["warnings"].append("1M_TIMING_WEAK")
-        result["quality_score"] = min(score, 100)
-        return result
+        result["warnings"].append("5M_TIMING_BELOW_VWAP")
 
-    if rv5 is not None and rv5 >= Decimal("1.0"):
-        score += 5
-    if _ema_direction(one) > 0 and _above_vwap(one):
+    if rv5 is not None and rv5 >= MIN_5M_RELATIVE_VOLUME:
         score += 5
     else:
-        result["warnings"].append("1M_TIMING_NOT_CONFIRMED")
+        result["warnings"].append("5M_RELATIVE_VOLUME_WEAK")
 
+    result["setup_type"] = "TREND_PULLBACK"
     result["quality_score"] = min(score, 100)
     result["review_candidate"] = True
-    result["reasons"].append("QUALIFIED_FOR_INDEPENDENT_REVIEW")
+    result["reasons"].append("QUALIFIED_CAPITAL_PRESERVATION_TREND_V2")
     return result
