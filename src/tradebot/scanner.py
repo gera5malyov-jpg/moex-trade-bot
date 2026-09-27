@@ -384,14 +384,19 @@ def realized_volatility_percent(
 
 
 def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
+    completed = [
+        c
+        for c in candles
+        if c.get("isComplete", c.get("is_complete", True))
+    ]
     closes = [
         quote_to_decimal(c.get("close"))
-        for c in candles
+        for c in completed
         if quote_to_decimal(c.get("close")) > 0
     ]
     volumes = [
         Decimal(str(c.get("volume", "0")))
-        for c in candles
+        for c in completed
         if Decimal(str(c.get("volume", "0"))) >= 0
     ]
     avg_volume = (
@@ -407,16 +412,18 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
     )
     highs = [
         quote_to_decimal(c.get("high"))
-        for c in candles
+        for c in completed
         if quote_to_decimal(c.get("high")) > 0
     ]
     lows = [
         quote_to_decimal(c.get("low"))
-        for c in candles
+        for c in completed
         if quote_to_decimal(c.get("low")) > 0
     ]
+    recent_highs_5 = highs[-5:]
+    recent_lows_5 = lows[-5:]
     turnover_estimate = Decimal("0")
-    for candle in candles:
+    for candle in completed:
         high = quote_to_decimal(candle.get("high"))
         low = quote_to_decimal(candle.get("low"))
         close = quote_to_decimal(candle.get("close"))
@@ -427,13 +434,16 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
             ) * volume
 
     rv = realized_volatility_percent(closes)
+    last = completed[-1] if completed else {}
     return {
-        "candles_count": len(candles),
+        "candles_count": len(completed),
         "ema9": str(ema(closes, 9)) if ema(closes, 9) is not None else None,
+        "ema20": str(ema(closes, 20)) if ema(closes, 20) is not None else None,
         "ema21": str(ema(closes, 21)) if ema(closes, 21) is not None else None,
+        "ema50": str(ema(closes, 50)) if ema(closes, 50) is not None else None,
         "rsi14": str(rsi(closes, 14)) if rsi(closes, 14) is not None else None,
-        "atr14": str(atr(candles, 14)) if atr(candles, 14) is not None else None,
-        "vwap": str(vwap(candles)) if vwap(candles) is not None else None,
+        "atr14": str(atr(completed, 14)) if atr(completed, 14) is not None else None,
+        "vwap": str(vwap(completed)) if vwap(completed) is not None else None,
         "relative_volume": str(relative_volume),
         "average_volume_20": str(avg_volume),
         "last_volume": str(last_volume),
@@ -442,9 +452,13 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
         "realized_volatility_percent": str(rv) if rv is not None else None,
         "recent_high": str(max(highs)) if highs else None,
         "recent_low": str(min(lows)) if lows else None,
+        "recent_high_5": str(max(recent_highs_5)) if recent_highs_5 else None,
+        "recent_low_5": str(min(recent_lows_5)) if recent_lows_5 else None,
+        "last_open": str(quote_to_decimal(last.get("open"))) if last else None,
+        "last_high": str(quote_to_decimal(last.get("high"))) if last else None,
+        "last_low": str(quote_to_decimal(last.get("low"))) if last else None,
         "last_close": str(closes[-1]) if closes else None,
     }
-
 
 def enrich_candidate(
     client: TInvestSandboxClient,
