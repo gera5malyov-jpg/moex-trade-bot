@@ -39,6 +39,13 @@ def frame(
     }
 
 
+def order_book(*, bid_quantity="30", ask_quantity="10"):
+    return {
+        "bids": [{"quantity": bid_quantity} for _ in range(5)],
+        "asks": [{"quantity": ask_quantity} for _ in range(5)],
+    }
+
+
 def benchmark(
     *,
     ema20="100",
@@ -62,10 +69,11 @@ def benchmark(
     }
 
 
-class CapitalPreservationTrendV21Tests(unittest.TestCase):
+class CapitalPreservationTrendV22Tests(unittest.TestCase):
     def valid_context(self):
         return {
             "spread_percent": "0.03",
+            "raw_order_book_top5": order_book(),
             "market_benchmark": benchmark(),
             "technical_1d": frame(
                 ema20="100",
@@ -109,7 +117,7 @@ class CapitalPreservationTrendV21Tests(unittest.TestCase):
     def test_trend_pullback_qualifies(self):
         result = assess_long_setup(self.valid_context())
         self.assertTrue(result["review_candidate"])
-        self.assertEqual(result["strategy_version"], "2.1")
+        self.assertEqual(result["strategy_version"], "2.2")
         self.assertEqual(
             result["strategy_name"],
             "CAPITAL_PRESERVATION_TREND_MARKET_RS",
@@ -133,6 +141,25 @@ class CapitalPreservationTrendV21Tests(unittest.TestCase):
         self.assertTrue(result["review_candidate"])
         self.assertIn("5M_TIMING_BELOW_VWAP", result["warnings"])
         self.assertIn("5M_RELATIVE_VOLUME_WEAK", result["warnings"])
+
+    def test_orderbook_support_is_soft_ranking_confirmation(self):
+        context = self.valid_context()
+        result = assess_long_setup(context)
+        self.assertTrue(result["review_candidate"])
+        self.assertEqual(result["orderbook_top5_imbalance"], "0.5")
+        self.assertEqual(result["quality_score"], 100)
+
+    def test_sell_heavy_orderbook_warns_but_does_not_veto(self):
+        context = self.valid_context()
+        context["raw_order_book_top5"] = order_book(
+            bid_quantity="10",
+            ask_quantity="30",
+        )
+        result = assess_long_setup(context)
+        self.assertTrue(result["review_candidate"])
+        self.assertEqual(result["orderbook_top5_imbalance"], "-0.5")
+        self.assertIn("ORDERBOOK_TOP5_SELL_HEAVY", result["warnings"])
+        self.assertEqual(result["quality_score"], 95)
 
     def test_market_risk_off_is_rejected(self):
         context = self.valid_context()
