@@ -865,7 +865,7 @@ def backtest_weekly_rotation(
                 (holdout_dd * Decimal("100")).quantize(Decimal("0.001"))
             ),
         },
-        "final_holdings": weights,
+        "final_holdings": {ticker: str(weight) for ticker, weight in weights.items()},
     }
 
 
