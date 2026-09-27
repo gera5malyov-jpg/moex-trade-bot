@@ -441,6 +441,16 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
         "ema20": str(ema(closes, 20)) if ema(closes, 20) is not None else None,
         "ema21": str(ema(closes, 21)) if ema(closes, 21) is not None else None,
         "ema50": str(ema(closes, 50)) if ema(closes, 50) is not None else None,
+        "ema50_10_ago": (
+            str(ema(closes[:-10], 50))
+            if len(closes) >= 60 and ema(closes[:-10], 50) is not None
+            else None
+        ),
+        "return_20": (
+            str(closes[-1] / closes[-21] - Decimal("1"))
+            if len(closes) >= 21 and closes[-21] > 0
+            else None
+        ),
         "rsi14": str(rsi(closes, 14)) if rsi(closes, 14) is not None else None,
         "atr14": str(atr(completed, 14)) if atr(completed, 14) is not None else None,
         "vwap": str(vwap(completed)) if vwap(completed) is not None else None,
@@ -459,6 +469,36 @@ def _candle_summary(candles: list[dict[str, Any]]) -> dict[str, Any]:
         "last_low": str(quote_to_decimal(last.get("low"))) if last else None,
         "last_close": str(closes[-1]) if closes else None,
     }
+
+def market_benchmark_context(
+    client: TInvestSandboxClient,
+    *,
+    query: str = "EQMX_TQBR",
+) -> dict[str, Any]:
+    instrument = client.find_instrument(query)
+    uid = str(
+        instrument.get("uid")
+        or instrument.get("instrumentUid")
+        or ""
+    )
+    now = datetime.now(timezone.utc)
+    candles = client.get_candles(
+        instrument_uid=uid,
+        from_time=now - timedelta(days=160),
+        to_time=now,
+        interval="CANDLE_INTERVAL_DAY",
+    )
+    return {
+        "ticker": str(instrument.get("ticker") or "EQMX").upper(),
+        "class_code": str(
+            instrument.get("classCode")
+            or instrument.get("class_code")
+            or ""
+        ).upper(),
+        "instrument_uid": uid,
+        "technical_1d": _candle_summary(candles),
+    }
+
 
 def enrich_candidate(
     client: TInvestSandboxClient,
