@@ -337,14 +337,16 @@ def main():
         for candidate in candidates
         if candidate["instrument_type"] not in {"share", "etf"}
     ]
-    ordered_candidates = supported_candidates + analysis_only_candidates
+    ordered_candidates = list(supported_candidates)
+    if analysis_only_max_signals > 0:
+        ordered_candidates.extend(analysis_only_candidates)
 
-    sent = 0
-    executable_sent = 0
-    analysis_only_sent = 0
+    # Evaluate the whole supported shortlist before emitting signals. The broad
+    # universe scanner is intentionally cheap and move-based; final emission is
+    # strategy-quality based so a larger daily mover cannot crowd out a better
+    # trend/pullback setup.
+    evaluated_candidates: list[dict] = []
     for candidate in ordered_candidates:
-        if sent >= max_signals:
-            break
         try:
             if has_recent_signal_for_instrument(
                 imap_host=cfg.imap_host,
@@ -374,17 +376,58 @@ def main():
                     sandbox_ready=sandbox_ready,
                 )
             )
-            if (
-                not execution_capability
-                and analysis_only_sent >= analysis_only_max_signals
-            ):
-                print(
-                    "Candidate skipped because execution is unavailable "
-                    "and the analysis-only signal limit is reached: "
-                    f"{candidate['ticker']}"
-                )
-                continue
+            evaluated_candidates.append(
+                {
+                    "candidate": candidate,
+                    "context": context,
+                    "strategy_precheck": strategy_precheck,
+                    "execution_capability": execution_capability,
+                }
+            )
+        except Exception as exc:
+            print(
+                f"Candidate enrichment failed for "
+                f"{candidate.get('ticker')}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
+    evaluated_candidates.sort(
+        key=lambda item: (
+            item["execution_capability"],
+            int(item["strategy_precheck"].get("quality_score") or 0),
+            item["candidate"]["move_percent"] > 0,
+            item["candidate"]["score"],
+        ),
+        reverse=True,
+    )
+
+    sent = 0
+    executable_sent = 0
+    analysis_only_sent = 0
+    for item in evaluated_candidates:
+        if sent >= max_signals:
+            break
+
+        candidate = item["candidate"]
+        context = item["context"]
+        strategy_precheck = item["strategy_precheck"]
+        execution_capability = item["execution_capability"]
+
+        if (
+            not execution_capability
+            and analysis_only_sent >= analysis_only_max_signals
+        ):
+            print(
+                "Candidate skipped because execution is unavailable "
+                "and the analysis-only signal limit is reached: "
+                f"{candidate['ticker']}"
+            )
+            continue
+
+        try:
+            observed_price = Decimal(
+                str(context.get("last_price") or candidate["last_price"])
+            )
             signal = Signal.create(
                 secret=cfg.hmac_secret,
                 ticker=candidate["ticker"],
@@ -392,7 +435,7 @@ def main():
                 instrument_uid=candidate["instrument_uid"],
                 instrument_type=candidate["instrument_type"],
                 execution_capability=execution_capability,
-                observed_price=candidate["last_price"],
+                observed_price=observed_price,
                 reason=(
                     "SCANNER CANDIDATE ONLY — "
                     f"{candidate['instrument_type']} "
@@ -401,7 +444,9 @@ def main():
                     f"regime={strategy_precheck.get('market_regime')}; "
                     f"setup={strategy_precheck.get('setup_type')}; "
                     f"quality_score={strategy_precheck.get('quality_score')} "
-                    "(ranking only, not probability). "
+                    "(ranking only, not probability); "
+                    f"orderbook_top5_imbalance="
+                    f"{strategy_precheck.get('orderbook_top5_imbalance')}. "
                     "Requires independent reviewer; "
                     f"execution_capability={execution_capability}."
                 ),
@@ -423,6 +468,10 @@ def main():
                         "ticker": signal.ticker,
                         "instrument_type": signal.instrument_type,
                         "execution_capability": signal.execution_capability,
+                        "quality_score": strategy_precheck.get("quality_score"),
+                        "orderbook_top5_imbalance": (
+                            strategy_precheck.get("orderbook_top5_imbalance")
+                        ),
                     },
                     ensure_ascii=False,
                 )
@@ -434,7 +483,7 @@ def main():
                 analysis_only_sent += 1
         except Exception as exc:
             print(
-                f"Candidate enrichment/send failed for "
+                f"Candidate send failed for "
                 f"{candidate.get('ticker')}: "
                 f"{type(exc).__name__}: {exc}"
             )
