@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-STRATEGY_VERSION = "2"
+STRATEGY_VERSION = "2.1"
 MAX_REVIEW_SPREAD_PERCENT = Decimal("0.08")
 MIN_DAILY_TURNOVER_RUB = Decimal("50000000")
 MIN_DAILY_ATR_PERCENT = Decimal("0.35")
@@ -25,7 +25,7 @@ MAX_DAILY_ATR_PERCENT = Decimal("5.0")
 MAX_EXTENSION_ATR = Decimal("1.50")
 PULLBACK_TOUCH_ATR = Decimal("0.50")
 PULLBACK_BREAK_ATR = Decimal("0.50")
-MIN_5M_RELATIVE_VOLUME = Decimal("0.60")
+MIN_5M_RELATIVE_VOLUME = Decimal("0.60")\nMIN_RELATIVE_STRENGTH_MARGIN = Decimal("0.005")
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -164,7 +164,7 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
 
     result: dict[str, Any] = {
         "strategy_version": STRATEGY_VERSION,
-        "strategy_name": "CAPITAL_PRESERVATION_TREND",
+        "strategy_name": "CAPITAL_PRESERVATION_TREND_MARKET_RS",
         "market_regime": regime,
         "setup_type": "NONE",
         "review_candidate": False,
@@ -195,10 +195,64 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
         result["reasons"].append(f"REGIME_NOT_TREND_UP:{regime}")
         return result
 
+    benchmark = context.get("market_benchmark")
+    if not isinstance(benchmark, dict) or benchmark.get("error"):
+        result["reasons"].append("MARKET_BENCHMARK_UNAVAILABLE")
+        return result
+    benchmark_day = benchmark.get("technical_1d")
+    if not isinstance(benchmark_day, dict):
+        result["reasons"].append("MARKET_BENCHMARK_UNAVAILABLE")
+        return result
+
+    benchmark_ema20 = _decimal(benchmark_day.get("ema20"))
+    benchmark_ema50 = _decimal(benchmark_day.get("ema50"))
+    benchmark_ema50_old = _decimal(benchmark_day.get("ema50_10_ago"))
+    benchmark_close = _decimal(benchmark_day.get("last_close"))
+    benchmark_return20 = _decimal(benchmark_day.get("return_20"))
+    if any(
+        x is None
+        for x in (
+            benchmark_ema20,
+            benchmark_ema50,
+            benchmark_ema50_old,
+            benchmark_close,
+            benchmark_return20,
+        )
+    ):
+        result["reasons"].append("MARKET_BENCHMARK_INCOMPLETE")
+        return result
+    if not (
+        benchmark_ema20 > benchmark_ema50
+        and benchmark_ema50 > benchmark_ema50_old
+        and benchmark_close >= benchmark_ema20
+    ):
+        result["reasons"].append("MARKET_RISK_OFF")
+        return result
+
     five = frames["technical_5m"]
     fifteen = frames["technical_15m"]
     hour = frames["technical_1h"]
     day = frames["technical_1d"]
+
+    day_ema50 = _decimal(day.get("ema50"))
+    day_ema50_old = _decimal(day.get("ema50_10_ago"))
+    day_return20 = _decimal(day.get("return_20"))
+    if day_ema50 is None or day_ema50_old is None or day_return20 is None:
+        result["reasons"].append("DAILY_STRENGTH_CONTEXT_INCOMPLETE")
+        return result
+    if day_ema50 <= day_ema50_old:
+        result["reasons"].append("DAILY_EMA50_NOT_RISING")
+        return result
+    required_relative_return = max(
+        Decimal("0"),
+        benchmark_return20,
+    ) + MIN_RELATIVE_STRENGTH_MARGIN
+    if day_return20 < required_relative_return:
+        result["reasons"].append(
+            "RELATIVE_STRENGTH_TOO_LOW:"
+            f"{day_return20}<{required_relative_return}"
+        )
+        return result
 
     turnover = _average_turnover(day)
     if turnover is None:
@@ -320,5 +374,5 @@ def assess_long_setup(context: dict[str, Any]) -> dict[str, Any]:
     result["setup_type"] = "TREND_PULLBACK"
     result["quality_score"] = min(score, 100)
     result["review_candidate"] = True
-    result["reasons"].append("QUALIFIED_CAPITAL_PRESERVATION_TREND_V2")
+    result["reasons"].append("QUALIFIED_CAPITAL_PRESERVATION_TREND_V2_1")
     return result
