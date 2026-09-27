@@ -1,0 +1,21 @@
+name: Gazpromneft parser probe
+
+on:
+  push:
+    paths:
+      - "scripts/gazprom_probe.py"
+      - ".github/workflows/gazprom-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python scripts/gazprom_probe.py
