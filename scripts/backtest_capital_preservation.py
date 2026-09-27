@@ -1,13 +1,9 @@
-"""Read-only historical validation for Capital Preservation Trend v2.
+"""Read-only historical validation for Capital Preservation Trend.
 
-This script uses T-Invest Sandbox market-data endpoints only. It never posts,
-cancels or modifies an order. The backtest is deliberately conservative:
-signals are computed from completed daily candles and entries happen no earlier
-than the next session open, avoiding same-bar look-ahead.
-
-It validates the core thesis (trend + pullback + recovery). The live scanner
-uses 1D/1h/15m/5m for finer timing, so these results are a strategy-health
-gate, not a claim that historical returns will repeat.
+No broker orders are created. The script deliberately uses completed daily
+candles and enters no earlier than the next session open to avoid same-bar
+look-ahead. It compares a few economically motivated variants rather than
+optimizing dozens of thresholds on one history sample.
 """
 
 from __future__ import annotations
@@ -15,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -32,7 +28,7 @@ MAX_ATR_PERCENT = Decimal("5.0")
 MAX_EXTENSION_ATR = Decimal("1.50")
 PULLBACK_TOUCH_ATR = Decimal("0.50")
 PULLBACK_BREAK_ATR = Decimal("0.50")
-MAX_HOLD_SESSIONS = 20
+BENCHMARK_QUERY = "EQMX_TQBR"
 
 DEFAULT_UNIVERSE = (
     "SBER_TQBR",
@@ -45,6 +41,44 @@ DEFAULT_UNIVERSE = (
     "MGNT_TQBR",
     "LENT_TQBR",
     "X5_TQBR",
+)
+
+
+@dataclass(frozen=True)
+class Variant:
+    name: str
+    relative_strength_margin: Decimal
+    stop_atr: Decimal
+    trail_atr: Decimal
+    max_hold_sessions: int
+    require_recovery_break: bool
+
+
+VARIANTS = (
+    Variant(
+        name="MARKET_RS_PULLBACK",
+        relative_strength_margin=Decimal("0.005"),
+        stop_atr=Decimal("2.2"),
+        trail_atr=Decimal("2.0"),
+        max_hold_sessions=30,
+        require_recovery_break=False,
+    ),
+    Variant(
+        name="MARKET_RS_RECOVERY",
+        relative_strength_margin=Decimal("0.005"),
+        stop_atr=Decimal("2.2"),
+        trail_atr=Decimal("2.0"),
+        max_hold_sessions=30,
+        require_recovery_break=True,
+    ),
+    Variant(
+        name="MARKET_RS_RECOVERY_WIDE",
+        relative_strength_margin=Decimal("0.005"),
+        stop_atr=Decimal("2.5"),
+        trail_atr=Decimal("2.5"),
+        max_hold_sessions=40,
+        require_recovery_break=True,
+    ),
 )
 
 
@@ -174,42 +208,101 @@ def fetch_daily_history(
     return list(sorted(dedup.values(), key=lambda x: x.time))
 
 
-def backtest_symbol(ticker: str, bars: list[Bar]) -> list[Trade]:
-    if len(bars) < 80:
-        return []
-
+def indicator_pack(bars: list[Bar]) -> dict[str, list[Decimal | None]]:
     closes = [x.close for x in bars]
     volumes = [x.volume for x in bars]
-    ema20 = ema_series(closes, 20)
-    ema50 = ema_series(closes, 50)
-    atr14 = atr_series(bars, 14)
-    avgvol20 = rolling_average(volumes, 20)
+    return {
+        "ema20": ema_series(closes, 20),
+        "ema50": ema_series(closes, 50),
+        "atr14": atr_series(bars, 14),
+        "avgvol20": rolling_average(volumes, 20),
+    }
 
+
+def benchmark_states(bars: list[Bar]) -> dict[date, dict[str, Decimal | bool]]:
+    ind = indicator_pack(bars)
+    states: dict[date, dict[str, Decimal | bool]] = {}
+    for i, bar in enumerate(bars):
+        if i < 60:
+            continue
+        e20 = ind["ema20"][i]
+        e50 = ind["ema50"][i]
+        e50_old = ind["ema50"][i - 10]
+        if e20 is None or e50 is None or e50_old is None:
+            continue
+        ret20 = bar.close / bars[i - 20].close - Decimal("1")
+        trend_up = (
+            e20 > e50
+            and e50 > e50_old
+            and bar.close >= e20
+        )
+        states[bar.time.date()] = {
+            "trend_up": trend_up,
+            "return_20": ret20,
+        }
+    return states
+
+
+def backtest_symbol(
+    ticker: str,
+    bars: list[Bar],
+    benchmark: dict[date, dict[str, Decimal | bool]],
+    variant: Variant,
+) -> list[Trade]:
+    if len(bars) < 90:
+        return []
+
+    ind = indicator_pack(bars)
     trades: list[Trade] = []
-    i = 50
+    i = 60
     while i < len(bars) - 1:
-        e20, e50, atrv, avgv = ema20[i], ema50[i], atr14[i], avgvol20[i]
-        if None in (e20, e50, atrv, avgv):
+        e20 = ind["ema20"][i]
+        e50 = ind["ema50"][i]
+        e50_old = ind["ema50"][i - 10]
+        atrv = ind["atr14"][i]
+        avgv = ind["avgvol20"][i]
+        if None in (e20, e50, e50_old, atrv, avgv):
             i += 1
             continue
-        assert e20 is not None and e50 is not None
+        assert e20 is not None and e50 is not None and e50_old is not None
         assert atrv is not None and avgv is not None
         bar = bars[i]
+
+        market = benchmark.get(bar.time.date())
+        if not market or market.get("trend_up") is not True:
+            i += 1
+            continue
+        benchmark_ret20 = market.get("return_20")
+        if not isinstance(benchmark_ret20, Decimal):
+            i += 1
+            continue
+
+        symbol_ret20 = bar.close / bars[i - 20].close - Decimal("1")
+        required_relative = max(Decimal("0"), benchmark_ret20) + (
+            variant.relative_strength_margin
+        )
 
         atr_pct = atrv / bar.close * Decimal("100")
         turnover = avgv * bar.close
         recent_low5 = min(x.low for x in bars[max(0, i - 4) : i + 1])
+        relative_volume = bar.volume / avgv if avgv > 0 else Decimal("0")
 
         valid = (
             e20 > e50
+            and e50 > e50_old
             and bar.close >= e20
             and bar.close >= e50
+            and symbol_ret20 >= required_relative
             and MIN_ATR_PERCENT <= atr_pct < MAX_ATR_PERCENT
             and turnover >= MIN_DAILY_TURNOVER_RUB
+            and relative_volume >= Decimal("0.60")
             and bar.close <= e20 + MAX_EXTENSION_ATR * atrv
             and recent_low5 <= e20 + PULLBACK_TOUCH_ATR * atrv
             and recent_low5 >= e50 - PULLBACK_BREAK_ATR * atrv
         )
+        if variant.require_recovery_break and i > 0:
+            valid = valid and bar.close > bars[i - 1].high
+
         if not valid:
             i += 1
             continue
@@ -222,7 +315,7 @@ def backtest_symbol(ticker: str, bars: list[Bar]) -> list[Trade]:
             continue
 
         structure_stop = recent_low5 - Decimal("0.25") * atrv
-        volatility_stop = entry - Decimal("2.0") * atrv
+        volatility_stop = entry - variant.stop_atr * atrv
         stop = max(structure_stop, volatility_stop)
         if stop <= 0 or stop >= entry:
             i += 1
@@ -234,7 +327,10 @@ def backtest_symbol(ticker: str, bars: list[Bar]) -> list[Trade]:
         exit_i: int | None = None
         exit_reason = ""
 
-        max_exit_i = min(len(bars) - 1, entry_i + MAX_HOLD_SESSIONS)
+        max_exit_i = min(
+            len(bars) - 1,
+            entry_i + variant.max_hold_sessions,
+        )
         j = entry_i
         while j <= max_exit_i:
             current = bars[j]
@@ -244,11 +340,11 @@ def backtest_symbol(ticker: str, bars: list[Bar]) -> list[Trade]:
                 exit_reason = "TRAIL_STOP" if trail > stop else "INITIAL_STOP"
                 break
 
-            current_e20 = ema20[j]
-            current_e50 = ema50[j]
-            current_atr = atr14[j]
+            current_e20 = ind["ema20"][j]
+            current_e50 = ind["ema50"][j]
+            current_atr = ind["atr14"][j]
             if current_e20 is not None and current_atr is not None:
-                candidate_trail = current_e20 - Decimal("1.5") * current_atr
+                candidate_trail = current_e20 - variant.trail_atr * current_atr
                 if candidate_trail > trail and candidate_trail < current.close:
                     trail = candidate_trail
 
@@ -329,9 +425,7 @@ def portfolio_metrics(trades: list[Trade]) -> dict[str, Any]:
             gross_loss += -contribution
 
     count = len(capital_returns)
-    profit_factor = (
-        gross_profit / gross_loss if gross_loss > 0 else None
-    )
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
     return {
         "start_capital_rub": str(START_CAPITAL),
         "end_capital_rub": str(capital.quantize(Decimal("0.01"))),
@@ -363,14 +457,16 @@ def portfolio_metrics(trades: list[Trade]) -> dict[str, Any]:
                 else Decimal("0")
             ).quantize(Decimal("0.001"))
         ),
-        "assumed_round_trip_cost_percent": str(
-            (ROUND_TRIP_COST * Decimal("100")).quantize(Decimal("0.001"))
+    }
+
+
+def split_metrics(trades: list[Trade], cutoff: datetime) -> dict[str, Any]:
+    return {
+        "earlier_sample": portfolio_metrics(
+            [x for x in trades if x.entry_time < cutoff]
         ),
-        "risk_per_trade_percent": str(
-            (RISK_PER_TRADE * Decimal("100")).quantize(Decimal("0.001"))
-        ),
-        "position_cap_percent": str(
-            (MAX_POSITION_SHARE * Decimal("100")).quantize(Decimal("0.01"))
+        "recent_holdout": portfolio_metrics(
+            [x for x in trades if x.entry_time >= cutoff]
         ),
     }
 
@@ -384,7 +480,9 @@ def main() -> None:
     client = TInvestSandboxClient(token=token, account_name=account_name)
 
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=int(os.getenv("BACKTEST_DAYS", "400")))
+    days = int(os.getenv("BACKTEST_DAYS", "400"))
+    start = end - timedelta(days=days)
+    cutoff = start + timedelta(days=int(days * 0.70))
     universe = tuple(
         x.strip().upper()
         for x in os.getenv(
@@ -394,51 +492,94 @@ def main() -> None:
         if x.strip()
     )
 
-    all_trades: list[Trade] = []
-    symbols: dict[str, Any] = {}
-    for query in universe:
-        try:
-            instrument = client.find_instrument(query)
-            uid = str(
-                instrument.get("uid")
-                or instrument.get("instrumentUid")
-                or ""
-            )
-            ticker = str(instrument.get("ticker") or query).upper()
-            bars = fetch_daily_history(client, uid, start, end)
-            trades = backtest_symbol(ticker, bars)
-            all_trades.extend(trades)
-            symbols[ticker] = {
-                "bars": len(bars),
-                "trades": len(trades),
-                "average_r": (
-                    str(
-                        (
-                            sum((t.r_multiple for t in trades), Decimal("0"))
-                            / Decimal(len(trades))
-                        ).quantize(Decimal("0.001"))
-                    )
-                    if trades
-                    else None
+    benchmark_instrument = client.find_instrument(BENCHMARK_QUERY)
+    benchmark_uid = str(
+        benchmark_instrument.get("uid")
+        or benchmark_instrument.get("instrumentUid")
+        or ""
+    )
+    benchmark_bars = fetch_daily_history(client, benchmark_uid, start, end)
+    benchmark = benchmark_states(benchmark_bars)
+
+    variant_reports: dict[str, Any] = {}
+    for variant in VARIANTS:
+        all_trades: list[Trade] = []
+        symbols: dict[str, Any] = {}
+        for query in universe:
+            try:
+                instrument = client.find_instrument(query)
+                uid = str(
+                    instrument.get("uid")
+                    or instrument.get("instrumentUid")
+                    or ""
+                )
+                ticker = str(instrument.get("ticker") or query).upper()
+                bars = fetch_daily_history(client, uid, start, end)
+                trades = backtest_symbol(ticker, bars, benchmark, variant)
+                all_trades.extend(trades)
+                symbols[ticker] = {
+                    "bars": len(bars),
+                    "trades": len(trades),
+                    "average_r": (
+                        str(
+                            (
+                                sum(
+                                    (t.r_multiple for t in trades),
+                                    Decimal("0"),
+                                )
+                                / Decimal(len(trades))
+                            ).quantize(Decimal("0.001"))
+                        )
+                        if trades
+                        else None
+                    ),
+                    "wins": sum(1 for t in trades if t.net_return > 0),
+                }
+            except Exception as exc:
+                symbols[query] = {
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+        variant_reports[variant.name] = {
+            "parameters": {
+                "relative_strength_margin": str(
+                    variant.relative_strength_margin
                 ),
-                "wins": sum(1 for t in trades if t.net_return > 0),
-            }
-        except Exception as exc:
-            symbols[query] = {
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+                "stop_atr": str(variant.stop_atr),
+                "trail_atr": str(variant.trail_atr),
+                "max_hold_sessions": variant.max_hold_sessions,
+                "require_recovery_break": variant.require_recovery_break,
+            },
+            "symbols": symbols,
+            "full_period": portfolio_metrics(all_trades),
+            "split": split_metrics(all_trades, cutoff),
+        }
 
     report = {
-        "strategy": "CAPITAL_PRESERVATION_TREND_V2",
+        "strategy_family": "CAPITAL_PRESERVATION_TREND",
         "model": "DAILY_CORE_PROXY_NO_LOOKAHEAD",
+        "benchmark": BENCHMARK_QUERY,
         "period_start_utc": start.isoformat(),
         "period_end_utc": end.isoformat(),
-        "symbols": symbols,
-        "portfolio_proxy": portfolio_metrics(all_trades),
+        "holdout_cutoff_utc": cutoff.isoformat(),
+        "risk_assumptions": {
+            "round_trip_cost_percent": str(
+                (ROUND_TRIP_COST * Decimal("100")).quantize(Decimal("0.001"))
+            ),
+            "risk_per_trade_percent": str(
+                (RISK_PER_TRADE * Decimal("100")).quantize(Decimal("0.001"))
+            ),
+            "position_cap_percent": str(
+                (MAX_POSITION_SHARE * Decimal("100")).quantize(Decimal("0.01"))
+            ),
+        },
+        "variants": variant_reports,
         "notes": [
-            "Read-only market-data backtest; no orders are placed.",
+            "Read-only T-Invest market-data validation; no orders are placed.",
+            "Market regime uses EQMX trend; entries require positive relative strength.",
             "Signal uses completed daily bars and next-session entry.",
-            "Live 1h/15m/5m timing is intentionally not simulated here.",
+            "The last 30% of calendar history is reported separately as a holdout.",
+            "Live 1h/15m/5m timing is not simulated in this daily core proxy.",
             "Historical results do not guarantee future returns.",
         ],
     }
