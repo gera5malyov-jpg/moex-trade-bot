@@ -51,11 +51,12 @@ Scanner:
 - для биржевых классов отбирает только `REAL_EXCHANGE_MOEX`;
 - DFA остаётся отдельным analysis-only специальным классом;
 - использует bulk last/close prices;
-- выполняет детерминированный strategy pre-check для SHARE/ETF: 1D режим → 1h рабочий тренд → 15m setup → 5m confirmation → 1m timing;
-- поддерживает LONG setup types: TREND_CONTINUATION / BREAKOUT / MEAN_REVERSION;
+- выполняет детерминированный Capital Preservation Trend v2.1 pre-check для SHARE/ETF: EQMX market regime → относительная сила бумаги → 1D тренд → 1h controlled pullback → 15m recovery → 5m execution quality;
+- исполняемый LONG setup только `TREND_PULLBACK`; 1m не является hard-veto; BREAKOUT / MEAN_REVERSION / TREND_CONTINUATION не являются самостоятельными основаниями для BUY;
 - quality_score pre-check используется только для ранжирования и не является вероятностью прибыли;
 - pre-check отсеивает широкий spread и неблагоприятный технический режим до независимого reviewer;
-- обогащает кандидата стаканом, торговым статусом, 1m/5m/15m/1h/1D свечами, EMA9/21, RSI14, ATR14, VWAP, relative volume, realized volatility и оценкой оборота;
+- обогащает кандидата стаканом, торговым статусом, 1m/5m/15m/1h/1D свечами, EMA20/50, RSI14, ATR14, VWAP, relative volume, realized volatility, 20-дневной доходностью и оценкой оборота;
+- добавляет benchmark-контекст EQMX: EMA20/50, наклон EMA50 и 20-дневную доходность для market-regime и relative-strength gate;
 - передаёт доступный RUB cash и состояние портфеля;
 - передаёт independently computed daily/weekly/monthly P&L, high-water drawdown, consecutive losses и статус торгового окна из подписанного baseline v3;
 - имеет cooldown по instrument UID, чтобы не слать один и тот же инструмент на каждом запуске.
@@ -67,15 +68,29 @@ Scanner:
 4. consecutive losses рассчитаны и loss-cooldown не активен;
 5. сейчас разрешённое торговое окно;
 6. инструмент доступен через API, ликвиден и находится в NORMAL_TRADING;
-7. полный 1m–1D technical snapshot доступен.
+7. полный 5m/15m/1h/1D technical snapshot v2.1 и benchmark EQMX доступны.
 
 Во всех остальных случаях сигнал analysis-only.
+
+## Capital Preservation Trend v2.1
+
+Исполняемая Sandbox-стратегия для share/ETF использует один сетап: LONG после контролируемого отката и восстановления в уже существующем восходящем тренде.
+
+BUY-кандидат обязан одновременно пройти:
+- risk-on режим EQMX: дневная EMA20 выше EMA50, EMA50 растёт, close не ниже EMA20;
+- положительную относительную силу: 20-дневная доходность бумаги выше max(0, доходность EQMX) минимум на 0,5 п.п.;
+- растущую дневную EMA50 и отсутствие чрезмерной растянутости относительно EMA20/ATR;
+- 1h pullback к EMA20 без разрушения EMA50;
+- 15m recovery выше EMA20 и VWAP;
+- spread, оборот, ATR, liquidity, freshness и hard-risk проверки.
+
+Историческая проверка хранится в `scripts/backtest_capital_preservation.py` и workflow `backtest-capital-preservation.yml`. Она является research-gate, а не доказательством будущей доходности. Production-контур по-прежнему отсутствует.
 
 ## Hard risk
 
 Кодовый hard-risk выполняется независимо от решения ChatGPT Work:
 
-- риск обычной сделки ≤ 0,25% капитала;
+- риск обычной сделки ≤ 0,20% капитала;
 - стоимость позиции ≤ 10% капитала;
 - максимум 2 открытые позиции;
 - дневной stop = 0,75% капитала;
@@ -180,7 +195,7 @@ Reviewer отдельно оценивает:
 Подтверждено unit/CI:
 - protocol v2 и HMAC identity;
 - signed readiness и signed internal journals;
-- hard-risk: 0,25%, 10%, 2 позиции, net R/R >= 2;
+- hard-risk: 0,20%, 10%, 2 позиции, net R/R >= 2;
 - daily/weekly/monthly loss limits;
 - high-water drawdown multiplier;
 - 2-loss cooldown;
