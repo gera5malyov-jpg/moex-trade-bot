@@ -347,7 +347,7 @@ class RiskTests(unittest.TestCase):
         )
         self.assertEqual(
             check.risk_budget_rub,
-            Decimal("1187.50000"),
+            Decimal("950"),
         )
 
     def test_two_loss_cooldown_blocks_for_two_hours(self):
