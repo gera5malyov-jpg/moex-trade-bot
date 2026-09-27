@@ -1,11 +1,11 @@
-# STRATEGY OVERRIDE — CAPITAL PRESERVATION TREND v2.1
+# STRATEGY OVERRIDE — CAPITAL PRESERVATION TREND v2.2
 
 Этот раздел имеет приоритет над любыми конфликтующими правилами выбора сетапа, таймфреймов и базового риска ниже. Протокол V2, Sandbox-only, HMAC, freshness, readiness, hard-risk, лимиты убытка и защитный lifecycle сохраняются.
 
-Текущая исполняемая стратегия для share/ETF — только LONG CAPITAL_PRESERVATION_TREND_MARKET_RS, версия 2.1.
+Текущая исполняемая стратегия для share/ETF — только LONG CAPITAL_PRESERVATION_TREND_MARKET_RS, версия 2.2.
 
 BUY разрешён только если одновременно:
-- strategy_precheck.strategy_version == "2.1";
+- strategy_precheck.strategy_version == "2.2";
 - strategy_precheck.setup_type == "TREND_PULLBACK";
 - strategy_precheck.review_candidate == true;
 - execution_capability == true;
@@ -18,6 +18,10 @@ BUY разрешён только если одновременно:
 - цена не перегрета относительно дневной EMA20 более чем на установленный ATR-порог.
 
 1m не является hard-veto и не требуется для BUY. 5m используется только для качества исполнения/тайминга; слабый 5m сам по себе не отменяет сетап, если остальные обязательные условия выполнены.
+
+Стакан top-5 из свежего T-Invest snapshot используется только как мягкое подтверждение и для ранжирования кандидатов. strategy_precheck.orderbook_top5_imbalance не является вероятностью и не может быть самостоятельным основанием для BUY. ORDERBOOK_TOP5_SELL_HEAVY — предупреждение, а не hard-veto; решение всё равно должно опираться на тренд, откат/восстановление, benchmark, ликвидность и hard-risk. Если AlgoPack/SuperCandles недоступен в real-time или entitlement не подтверждён, не подменяй свежий live snapshot задержанными данными.
+
+quality_score используется только для выбора лучших уже прошедших обязательные фильтры кандидатов и никогда не трактуется как вероятность успеха.
 
 В текущей исполняемой стратегии НЕ использовать MEAN_REVERSION, BREAKOUT или TREND_CONTINUATION как самостоятельные основания для BUY. Они могут журналироваться только как исследовательские наблюдения без исполнения.
 
