@@ -82,6 +82,36 @@ VARIANTS = (
 )
 
 
+@dataclass(frozen=True)
+class BreakoutVariant:
+    name: str
+    entry_lookback: int
+    exit_lookback: int
+    stop_atr: Decimal
+    trail_atr: Decimal
+    max_hold_sessions: int
+
+
+BREAKOUT_VARIANTS = (
+    BreakoutVariant(
+        name="BREAKOUT_20_10",
+        entry_lookback=20,
+        exit_lookback=10,
+        stop_atr=Decimal("2.0"),
+        trail_atr=Decimal("2.5"),
+        max_hold_sessions=60,
+    ),
+    BreakoutVariant(
+        name="BREAKOUT_55_20",
+        entry_lookback=55,
+        exit_lookback=20,
+        stop_atr=Decimal("2.0"),
+        trail_atr=Decimal("3.0"),
+        max_hold_sessions=90,
+    ),
+)
+
+
 def qdec(value: Any) -> Decimal:
     if not isinstance(value, dict):
         return Decimal("0")
@@ -393,6 +423,158 @@ def backtest_symbol(
     return trades
 
 
+def backtest_breakout_symbol(
+    ticker: str,
+    bars: list[Bar],
+    benchmark: dict[date, dict[str, Decimal | bool]],
+    variant: BreakoutVariant,
+) -> list[Trade]:
+    if len(bars) < max(100, variant.entry_lookback + 30):
+        return []
+
+    ind = indicator_pack(bars)
+    trades: list[Trade] = []
+    i = max(60, variant.entry_lookback)
+    while i < len(bars) - 1:
+        e20 = ind["ema20"][i]
+        e50 = ind["ema50"][i]
+        e50_old = ind["ema50"][i - 10]
+        atrv = ind["atr14"][i]
+        avgv = ind["avgvol20"][i]
+        if None in (e20, e50, e50_old, atrv, avgv):
+            i += 1
+            continue
+        assert e20 is not None and e50 is not None and e50_old is not None
+        assert atrv is not None and avgv is not None
+        bar = bars[i]
+
+        market = benchmark.get(bar.time.date())
+        if not market or market.get("trend_up") is not True:
+            i += 1
+            continue
+        benchmark_ret20 = market.get("return_20")
+        if not isinstance(benchmark_ret20, Decimal):
+            i += 1
+            continue
+
+        symbol_ret20 = bar.close / bars[i - 20].close - Decimal("1")
+        atr_pct = atrv / bar.close * Decimal("100")
+        turnover = avgv * bar.close
+        relative_volume = bar.volume / avgv if avgv > 0 else Decimal("0")
+        prior_high = max(
+            x.high
+            for x in bars[i - variant.entry_lookback : i]
+        )
+
+        valid = (
+            e20 > e50
+            and e50 > e50_old
+            and bar.close > prior_high
+            and symbol_ret20 > max(Decimal("0"), benchmark_ret20)
+            and MIN_ATR_PERCENT <= atr_pct < MAX_ATR_PERCENT
+            and turnover >= MIN_DAILY_TURNOVER_RUB
+            and relative_volume >= Decimal("0.80")
+        )
+        if not valid:
+            i += 1
+            continue
+
+        entry_i = i + 1
+        entry_bar = bars[entry_i]
+        entry = entry_bar.open
+        if entry <= 0:
+            i += 1
+            continue
+
+        stop = entry - variant.stop_atr * atrv
+        if stop <= 0 or stop >= entry:
+            i += 1
+            continue
+
+        initial_risk = entry - stop
+        trail = stop
+        highest_close = entry
+        exit_price: Decimal | None = None
+        exit_i: int | None = None
+        exit_reason = ""
+
+        max_exit_i = min(
+            len(bars) - 1,
+            entry_i + variant.max_hold_sessions,
+        )
+        j = entry_i
+        while j <= max_exit_i:
+            current = bars[j]
+            if current.low <= trail:
+                exit_price = trail
+                exit_i = j
+                exit_reason = "ATR_TRAIL"
+                break
+
+            highest_close = max(highest_close, current.close)
+            current_atr = ind["atr14"][j]
+            if current_atr is not None:
+                candidate_trail = highest_close - variant.trail_atr * current_atr
+                if candidate_trail > trail and candidate_trail < current.close:
+                    trail = candidate_trail
+
+            if j >= variant.exit_lookback:
+                prior_exit_low = min(
+                    x.low
+                    for x in bars[j - variant.exit_lookback : j]
+                )
+                if current.close < prior_exit_low and j + 1 < len(bars):
+                    exit_price = bars[j + 1].open
+                    exit_i = j + 1
+                    exit_reason = "DONCHIAN_EXIT"
+                    break
+
+            current_e50 = ind["ema50"][j]
+            if (
+                current_e50 is not None
+                and current.close < current_e50
+                and j + 1 < len(bars)
+            ):
+                exit_price = bars[j + 1].open
+                exit_i = j + 1
+                exit_reason = "TREND_BREAK"
+                break
+
+            if j == max_exit_i:
+                exit_price = current.close
+                exit_i = j
+                exit_reason = "TIME_EXIT"
+                break
+            j += 1
+
+        if exit_price is None or exit_i is None:
+            i += 1
+            continue
+
+        gross = exit_price / entry - Decimal("1")
+        net = gross - ROUND_TRIP_COST
+        risk_pct = initial_risk / entry
+        r_multiple = net / risk_pct if risk_pct > 0 else Decimal("0")
+        trades.append(
+            Trade(
+                ticker=ticker,
+                entry_time=entry_bar.time,
+                exit_time=bars[exit_i].time,
+                entry=entry,
+                exit=exit_price,
+                initial_stop=stop,
+                gross_return=gross,
+                net_return=net,
+                r_multiple=r_multiple,
+                holding_sessions=exit_i - entry_i + 1,
+                exit_reason=exit_reason,
+            )
+        )
+        i = max(exit_i + 1, i + 1)
+
+    return trades
+
+
 def portfolio_metrics(trades: list[Trade]) -> dict[str, Any]:
     capital = START_CAPITAL
     peak = capital
@@ -555,6 +737,63 @@ def main() -> None:
             "split": split_metrics(all_trades, cutoff),
         }
 
+    breakout_reports: dict[str, Any] = {}
+    for variant in BREAKOUT_VARIANTS:
+        all_trades: list[Trade] = []
+        symbols: dict[str, Any] = {}
+        for query in universe:
+            try:
+                instrument = client.find_instrument(query)
+                uid = str(
+                    instrument.get("uid")
+                    or instrument.get("instrumentUid")
+                    or ""
+                )
+                ticker = str(instrument.get("ticker") or query).upper()
+                bars = fetch_daily_history(client, uid, start, end)
+                trades = backtest_breakout_symbol(
+                    ticker,
+                    bars,
+                    benchmark,
+                    variant,
+                )
+                all_trades.extend(trades)
+                symbols[ticker] = {
+                    "bars": len(bars),
+                    "trades": len(trades),
+                    "average_r": (
+                        str(
+                            (
+                                sum(
+                                    (t.r_multiple for t in trades),
+                                    Decimal("0"),
+                                )
+                                / Decimal(len(trades))
+                            ).quantize(Decimal("0.001"))
+                        )
+                        if trades
+                        else None
+                    ),
+                    "wins": sum(1 for t in trades if t.net_return > 0),
+                }
+            except Exception as exc:
+                symbols[query] = {
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+        breakout_reports[variant.name] = {
+            "parameters": {
+                "entry_lookback": variant.entry_lookback,
+                "exit_lookback": variant.exit_lookback,
+                "stop_atr": str(variant.stop_atr),
+                "trail_atr": str(variant.trail_atr),
+                "max_hold_sessions": variant.max_hold_sessions,
+            },
+            "symbols": symbols,
+            "full_period": portfolio_metrics(all_trades),
+            "split": split_metrics(all_trades, cutoff),
+        }
+
     report = {
         "strategy_family": "CAPITAL_PRESERVATION_TREND",
         "model": "DAILY_CORE_PROXY_NO_LOOKAHEAD",
@@ -574,6 +813,7 @@ def main() -> None:
             ),
         },
         "variants": variant_reports,
+        "breakout_variants": breakout_reports,
         "notes": [
             "Read-only T-Invest market-data validation; no orders are placed.",
             "Market regime uses EQMX trend; entries require positive relative strength.",
