@@ -1,0 +1,35 @@
+name: Capital Preservation Trend v2 backtest
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "src/tradebot/strategy.py"
+      - "src/tradebot/scanner.py"
+      - "scripts/backtest_capital_preservation.py"
+      - ".github/workflows/backtest-capital-preservation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capital-preservation-v2-backtest
+  cancel-in-progress: true
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Historical read-only validation
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          BACKTEST_DAYS: "400"
+        run: python scripts/backtest_capital_preservation.py
