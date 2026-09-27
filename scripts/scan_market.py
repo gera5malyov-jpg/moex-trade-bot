@@ -25,7 +25,7 @@ from tradebot.risk import (
     compute_period_pnl_rub,
     latest_strategy_close_time,
 )
-from tradebot.scanner import enrich_candidate, scan_candidates
+from tradebot.scanner import enrich_candidate, market_benchmark_context, scan_candidates
 from tradebot.strategy import assess_long_setup
 from tradebot.tinvest import TInvestSandboxClient
 
@@ -315,6 +315,13 @@ def main():
     except Exception as exc:
         hard_risk_context["error"] = f"{type(exc).__name__}: {exc}"
 
+    try:
+        benchmark_context = market_benchmark_context(client)
+    except Exception as exc:
+        benchmark_context = {
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
     candidates = scan_candidates(
         client,
         max_per_type=max_per_type,
@@ -353,6 +360,7 @@ def main():
                 continue
 
             context = enrich_candidate(client, candidate)
+            context["market_benchmark"] = benchmark_context
             context["hard_risk_context"] = dict(hard_risk_context)
             strategy_precheck = assess_long_setup(context)
             context["strategy_precheck"] = strategy_precheck
