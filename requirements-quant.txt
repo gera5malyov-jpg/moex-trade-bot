@@ -1,0 +1,2 @@
+moexalgo==2.5.12
+vectorbt==1.1.1
