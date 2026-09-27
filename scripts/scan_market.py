@@ -122,7 +122,6 @@ def execution_snapshot_ready(
         return False
 
     for key in (
-        "technical_1m",
         "technical_5m",
         "technical_15m",
         "technical_1h",
@@ -130,15 +129,18 @@ def execution_snapshot_ready(
     ):
         technical = context.get(key) or {}
         required = (
-            "ema9",
-            "ema21",
+            "ema20",
+            "ema50",
             "rsi14",
             "atr14",
             "vwap",
-            "realized_volatility_percent",
+            "relative_volume",
+            "average_volume_20",
+            "recent_high_5",
+            "recent_low_5",
             "last_close",
         )
-        if int(technical.get("candles_count") or 0) < 22:
+        if int(technical.get("candles_count") or 0) < 50:
             return False
         if any(technical.get(field) is None for field in required):
             return False
