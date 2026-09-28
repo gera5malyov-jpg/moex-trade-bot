@@ -2,11 +2,6 @@ name: Sandbox daily controls
 
 on:
   workflow_dispatch:
-  # Temporary self-test trigger. Removed after today's readiness validation.
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/sandbox-daily-controls.yml"
   schedule:
     # 06:00 Moscow on weekdays.
     - cron: "0 3 * * 1-5"
