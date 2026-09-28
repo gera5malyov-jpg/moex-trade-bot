@@ -481,7 +481,7 @@ def validate_buy_hard_risk(
         * risk_budget_multiplier
     )
     if max_loss > risk_budget:
-        raise RuntimeError("Hard risk: max loss exceeds 0.25% of capital")
+        raise RuntimeError("Hard risk: max loss exceeds 0.20% of capital")
 
     return RiskCheck(
         capital_rub=capital,
