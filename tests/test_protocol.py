@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from tradebot.protocol import (
     PROTOCOL_VERSION,
@@ -57,6 +58,7 @@ class ProtocolTests(unittest.TestCase):
             "ready_version": SANDBOX_READY_VERSION,
             "environment": "TINVEST_SANDBOX",
             "verified_at_utc": verified_at,
+            "smoke_date_moscow": datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Moscow")).date().isoformat(),
             "sandbox_account_name": "github-moex-trade-bot",
             "sandbox_account_id": "sandbox-account-id",
             "lifecycle_version": PROTECTIVE_LIFECYCLE_VERSION,
@@ -101,6 +103,34 @@ class ProtocolTests(unittest.TestCase):
             verify_sandbox_readiness_payload(
                 secret,
                 tampered,
+                expected_account_name="github-moex-trade-bot",
+                expected_account_id="sandbox-account-id",
+            )
+        )
+
+        stale_verified_at = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat()
+        stale = dict(payload)
+        stale["verified_at_utc"] = stale_verified_at
+        stale["smoke_date_moscow"] = (
+            (datetime.now(timezone.utc) - timedelta(days=1))
+            .astimezone(ZoneInfo("Europe/Moscow"))
+            .date()
+            .isoformat()
+        )
+        stale["readiness_token"] = make_sandbox_readiness_token(
+            secret,
+            verified_at_utc=stale_verified_at,
+            sandbox_account_name="github-moex-trade-bot",
+            sandbox_account_id="sandbox-account-id",
+            lifecycle_version=PROTECTIVE_LIFECYCLE_VERSION,
+            instrument="SBER_TQBR",
+        )
+        self.assertFalse(
+            verify_sandbox_readiness_payload(
+                secret,
+                stale,
                 expected_account_name="github-moex-trade-bot",
                 expected_account_id="sandbox-account-id",
             )
