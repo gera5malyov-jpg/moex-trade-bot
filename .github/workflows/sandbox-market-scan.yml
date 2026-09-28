@@ -2,11 +2,8 @@ name: Sandbox market scan
 
 on:
   workflow_dispatch:
-  schedule:
-    # Hourly at :07 Moscow, aligned with the reviewer at :13.
-    # This keeps the signed T-Invest snapshot fresh for the reviewer.
-    - cron: "7 7-14 * * 1-5"
 
+# Scheduled execution moved to sandbox-trading-runtime.yml.
 permissions:
   contents: read
 
