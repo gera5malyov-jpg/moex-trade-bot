@@ -2,11 +2,6 @@ name: Sandbox trading runtime
 
 on:
   workflow_dispatch:
-  # Temporary validation trigger. Removed after the runtime passes today.
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/sandbox-trading-runtime.yml"
   schedule:
     # Scanner: hourly at :07 UTC, i.e. 10:07-17:07 Moscow on weekdays.
     - cron: "7 7-14 * * 1-5"
