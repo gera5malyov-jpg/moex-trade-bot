@@ -32,7 +32,6 @@ jobs:
       - name: Scan market candidates
         if: >-
           github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' ||
           github.event.schedule == '7 7-14 * * 1-5'
         env:
           PYTHONPATH: src
@@ -53,7 +52,6 @@ jobs:
       - name: Allow reviewer to produce a command
         if: >-
           github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' ||
           github.event.schedule == '7 7-14 * * 1-5'
         run: sleep 90
 
