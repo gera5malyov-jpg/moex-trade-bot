@@ -2,15 +2,8 @@ name: Sandbox trading runtime
 
 on:
   workflow_dispatch:
-  schedule:
-    # Scanner: hourly at :07 UTC, i.e. 10:07-17:07 Moscow on weekdays.
-    - cron: "7 7-14 * * 1-5"
-    # Command/lifecycle heartbeat: every five minutes during the Moscow
-    # intraday execution window, using off-grid minutes to reduce contention.
-    - cron: "48,53,58 6 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 7-14 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43 15 * * 1-5"
 
+# Scheduled execution is centralized in sandbox-daily-controls.yml.
 permissions:
   contents: read
 
