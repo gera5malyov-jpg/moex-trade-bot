@@ -401,6 +401,31 @@ def main():
         reverse=True,
     )
 
+    # Observability only: expose why the strongest candidates did or did
+    # not pass the executable v2.2 gate. Never include auth tokens or secrets.
+    for item in evaluated_candidates[:10]:
+        precheck = item["strategy_precheck"]
+        candidate = item["candidate"]
+        print(
+            json.dumps(
+                {
+                    "diagnostic": "strategy_precheck",
+                    "ticker": candidate.get("ticker"),
+                    "instrument_type": candidate.get("instrument_type"),
+                    "execution_capability": item["execution_capability"],
+                    "strategy_name": precheck.get("strategy_name"),
+                    "strategy_version": precheck.get("strategy_version"),
+                    "market_regime": precheck.get("market_regime"),
+                    "setup_type": precheck.get("setup_type"),
+                    "review_candidate": precheck.get("review_candidate"),
+                    "quality_score": precheck.get("quality_score"),
+                    "reasons": precheck.get("reasons"),
+                    "warnings": precheck.get("warnings"),
+                },
+                ensure_ascii=False,
+            )
+        )
+
     sent = 0
     executable_sent = 0
     analysis_only_sent = 0
