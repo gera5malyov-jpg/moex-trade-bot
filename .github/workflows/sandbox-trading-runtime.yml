@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/sandbox-trading-runtime.yml"
+      - "src/tradebot/scanner.py"
 
 # Scheduled execution is centralized in sandbox-daily-controls.yml.
 permissions:
