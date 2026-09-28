@@ -2,16 +2,8 @@ name: Sandbox trading heartbeat
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Sandbox market scan"]
-    types: [completed]
-  schedule:
-    # Weekdays 09:48-18:43 Moscow. Use off-grid minutes to reduce
-    # GitHub scheduler contention from common */5 cron expressions.
-    - cron: "48,53,58 6 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 7-14 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43 15 * * 1-5"
 
+# Scheduled execution moved to sandbox-trading-runtime.yml.
 permissions:
   contents: read
 
