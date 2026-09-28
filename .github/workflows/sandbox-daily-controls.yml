@@ -44,7 +44,6 @@ jobs:
   sandbox-readiness:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
       github.event.schedule == '55 6 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 9
