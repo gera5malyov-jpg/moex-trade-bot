@@ -32,8 +32,6 @@ from tradebot.tinvest import TInvestSandboxClient
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
-SMOKE_DATE = "2026-09-21"
-
 
 def q(value):
     if not isinstance(value, dict):
@@ -115,10 +113,6 @@ def main():
     cfg = Config.from_env()
     now = datetime.now(timezone.utc)
     moscow_date = now.astimezone(MOSCOW).date().isoformat()
-
-    if moscow_date != SMOKE_DATE:
-        print(f"Smoke test not scheduled for {moscow_date}; expected {SMOKE_DATE}")
-        return
 
     client = TInvestSandboxClient(
         token=cfg.tinvest_token,
