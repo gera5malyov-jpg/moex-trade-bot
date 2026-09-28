@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 PROTOCOL_VERSION = "2"
@@ -221,7 +222,20 @@ def verify_sandbox_readiness_payload(
             return False
 
         verified_at = parse_iso_utc(str(payload.get("verified_at_utc") or ""))
-        if verified_at > utc_now() + timedelta(minutes=2):
+        now = utc_now()
+        if verified_at > now + timedelta(minutes=2):
+            return False
+
+        # Readiness is a trading-day safety gate, not a permanent certificate.
+        # The signed verified_at timestamp must belong to the current Moscow
+        # trading date. An old lifecycle smoke must never authorize a new day.
+        moscow = ZoneInfo("Europe/Moscow")
+        current_moscow_date = now.astimezone(moscow).date().isoformat()
+        verified_moscow_date = verified_at.astimezone(moscow).date().isoformat()
+        if verified_moscow_date != current_moscow_date:
+            return False
+        smoke_date = str(payload.get("smoke_date_moscow") or "")
+        if smoke_date and smoke_date != verified_moscow_date:
             return False
 
         expected = make_sandbox_readiness_token(
