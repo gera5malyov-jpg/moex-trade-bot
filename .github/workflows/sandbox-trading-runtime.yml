@@ -2,11 +2,6 @@ name: Sandbox trading runtime
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/sandbox-trading-runtime.yml"
-      - "src/tradebot/scanner.py"
 
 # Scheduled execution is centralized in sandbox-daily-controls.yml.
 permissions:
@@ -30,7 +25,6 @@ jobs:
       - name: Scan market candidates
         if: >-
           github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' ||
           github.event.schedule == '7 7-14 * * 1-5'
         env:
           PYTHONPATH: src
@@ -38,7 +32,7 @@ jobs:
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "6"
-          SCANNER_MAX_SIGNALS: "0"
+          SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "20"
           MAIL_USER: ${{ secrets.MAIL_USER }}
