@@ -530,15 +530,19 @@ def enrich_candidate(
         to_time=now,
         interval="CANDLE_INTERVAL_1_MIN",
     )
+    # Intraday indicators need enough completed history even on Monday
+    # mornings and after ordinary weekends. T-Invest allows roughly one week
+    # per 5m request and three weeks per 15m request, so stay inside those
+    # endpoint limits while spanning prior trading sessions.
     candles_5m = client.get_candles(
         instrument_uid=uid,
-        from_time=now - timedelta(hours=8),
+        from_time=now - timedelta(days=6, hours=23),
         to_time=now,
         interval="CANDLE_INTERVAL_5_MIN",
     )
     candles_15m = client.get_candles(
         instrument_uid=uid,
-        from_time=now - timedelta(days=3),
+        from_time=now - timedelta(days=20),
         to_time=now,
         interval="CANDLE_INTERVAL_15_MIN",
     )
