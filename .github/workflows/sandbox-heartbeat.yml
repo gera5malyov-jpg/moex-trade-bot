@@ -13,9 +13,6 @@ concurrency:
 
 jobs:
   heartbeat:
-    if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -24,9 +21,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Allow Outlook and reviewer to produce a command
-        if: github.event_name == 'workflow_run'
-        run: sleep 90
       - name: Process fresh trade commands
         env:
           PYTHONPATH: src
