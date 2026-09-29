@@ -1,13 +1,7 @@
 name: Gazpromneft station 17 monitor
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
-  push:
-    paths:
-      - "scripts/gazprom_fuel_monitor.py"
-      - ".github/workflows/gazprom-fuel-monitor.yml"
 
 permissions:
   contents: read
