@@ -1,0 +1,53 @@
+name: Audit scheduled active once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/audit-scheduled-active-once.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: List scheduled active workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/workflows?per_page=100" > /tmp/workflows-pages.jsonl
+          python3 - <<'PY'
+          import json, pathlib, re
+          raw=pathlib.Path('/tmp/workflows-pages.jsonl').read_text()
+          dec=json.JSONDecoder(); pos=0; pages=[]
+          while pos < len(raw):
+              while pos < len(raw) and raw[pos].isspace(): pos+=1
+              if pos>=len(raw): break
+              obj,end=dec.raw_decode(raw,pos); pages.append(obj); pos=end
+          out=[]
+          for page in pages:
+              for w in page.get('workflows',[]):
+                  if w.get('state')!='active':
+                      continue
+                  p=w.get('path') or ''
+                  if p.endswith('audit-scheduled-active-once.yml'):
+                      continue
+                  fp=pathlib.Path(p)
+                  if not fp.exists():
+                      continue
+                  text=fp.read_text(errors='replace')
+                  if not re.search(r'^\s*schedule\s*:', text, re.M):
+                      continue
+                  crons=[m.group(1).strip() for m in re.finditer(r"cron:\s*['\"]?([^'\"\n]+)",text)]
+                  out.append({'id':w.get('id'),'name':w.get('name'),'path':p,'crons':crons})
+          out.sort(key=lambda x:(x['name'] or '').casefold())
+          print('SCHEDULED_ACTIVE_JSON='+json.dumps(out,ensure_ascii=False))
+          print('SCHEDULED_ACTIVE_COUNT='+str(len(out)))
+          PY
