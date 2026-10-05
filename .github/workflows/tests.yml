@@ -9,6 +9,7 @@ on:
       - "tests/**"
       - "requirements.txt"
       - ".github/workflows/tests.yml"
+      - ".github/workflows/sandbox-daily-controls.yml"
 
 permissions:
   contents: read
