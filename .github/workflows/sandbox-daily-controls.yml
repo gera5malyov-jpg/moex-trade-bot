@@ -6,7 +6,7 @@ on:
     paths:
       - ".github/workflows/sandbox-daily-controls.yml"
   schedule:
-    # Resilient scheduler hub. GitHub may delay/drop individual schedule events,
+    # Resilient scheduler hub. GitHub may delay/drop individual schedule events; recovery is mandatory,
     # so every surviving tick performs all safety-critical reconciliation.
     # Moscow time is explicit; no UTC conversion is required.
     - cron: "3/5 9-18 * * 1-5"
