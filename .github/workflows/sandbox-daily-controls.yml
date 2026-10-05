@@ -74,6 +74,17 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/risk_baseline.py
+      - name: Reconcile any stale strategy lifecycle before readiness
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "true"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/monitor_lifecycle.py
       - name: Verify protected Sandbox lifecycle and refresh readiness
         env:
           PYTHONPATH: src
@@ -101,6 +112,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Reconcile lifecycle before emitting new signals
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "true"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/monitor_lifecycle.py
       - name: Scan market candidates
         env:
           PYTHONPATH: src
