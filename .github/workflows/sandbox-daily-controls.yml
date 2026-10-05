@@ -3,192 +3,101 @@ name: Sandbox daily controls
 on:
   workflow_dispatch:
   schedule:
-    # 06:00 Moscow on weekdays.
-    - cron: "0 3 * * 1-5"
-    # 09:55 Moscow on weekdays: refresh broker-protection readiness
-    # immediately before the 10:05+ executable scan window.
-    - cron: "55 6 * * 1-5"
-    # End-of-day broker snapshot: 00:05 Moscow next calendar day.
-    # The snapshot script is told to report the just-finished Moscow date.
-    - cron: "5 21 * * *"
-    # Market scanner: 10:07-17:07 Moscow, hourly on weekdays.
-    - cron: "7 7-14 * * 1-5"
-    # Command processor + protective lifecycle heartbeat: every 5 minutes
-    # across the intraday execution/cleanup window.
-    - cron: "48,53,58 6 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 7-14 * * 1-5"
-    - cron: "3,8,13,18,23,28,33,38,43 15 * * 1-5"
+    # Resilient scheduler hub. GitHub may delay/drop individual schedule events,
+    # so every surviving tick performs all safety-critical reconciliation.
+    # Moscow time is explicit; no UTC conversion is required.
+    - cron: "3/5 9-18 * * 1-5"
+      timezone: "Europe/Moscow"
+    # End-of-day broker snapshot for the just-finished Moscow date.
+    - cron: "5 0 * * *"
+      timezone: "Europe/Moscow"
 
 permissions:
   contents: read
 
+concurrency:
+  group: sandbox-daily-controls
+  cancel-in-progress: false
+
 jobs:
-  risk-baseline:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * 1-5'
+  trading-cycle:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '3/5 9-18 * * 1-5'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: sandbox-risk-baseline
-      cancel-in-progress: false
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Create signed risk baseline
-        env:
+
+      - name: Ensure signed Moscow-day risk baseline
+        env: &sandbox_env
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
           TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/risk_baseline.py
 
-  sandbox-readiness:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '55 6 * * 1-5'
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    concurrency:
-      group: sandbox-daily-readiness
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Ensure today's signed risk baseline exists
+      - name: Reconcile stale/open lifecycle before any new work
         env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/risk_baseline.py
-      - name: Reconcile any stale strategy lifecycle before readiness
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          <<: *sandbox_env
           TRADING_ENABLED: "true"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/monitor_lifecycle.py
-      - name: Verify protected Sandbox lifecycle and refresh readiness
+
+      - name: Ensure today's Sandbox readiness
         env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          <<: *sandbox_env
           TRADING_ENABLED: "false"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
         run: python scripts/sandbox_lifecycle_smoke.py
 
-  market-scan:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '7 7-14 * * 1-5'
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    concurrency:
-      group: sandbox-market-scan
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Reconcile lifecycle before emitting new signals
+      - name: Process fresh trade commands
         env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          <<: *sandbox_env
           TRADING_ENABLED: "true"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/monitor_lifecycle.py
-      - name: Scan market candidates
+          COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
+          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
+        run: python scripts/process_commands.py
+
+      - name: Reconcile lifecycle after command processing
         env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          <<: *sandbox_env
+          TRADING_ENABLED: "true"
+        run: python scripts/monitor_lifecycle.py
+
+      - name: Scan market once per hour window
+        env:
+          <<: *sandbox_env
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
           SCANNER_COOLDOWN_MINUTES: "20"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: gera5malyov+trade@gmail.com
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/scan_market.py
-
-  trading-heartbeat:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '48,53,58 6 * * 1-5' ||
-      github.event.schedule == '3,8,13,18,23,28,33,38,43,48,53,58 7-14 * * 1-5' ||
-      github.event.schedule == '3,8,13,18,23,28,33,38,43 15 * * 1-5'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: sandbox-trading-heartbeat
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Process fresh trade commands
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "true"
-          COMMAND_MAX_AGE_MINUTES: ${{ vars.COMMAND_MAX_AGE_MINUTES || '15' }}
-          SIGNAL_MAX_AGE_MINUTES: ${{ vars.SIGNAL_MAX_AGE_MINUTES || '90' }}
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/process_commands.py
-      - name: Monitor protective lifecycle
-        env:
-          PYTHONPATH: src
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
-          TRADING_ENABLED: "true"
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
-          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
-        run: python scripts/monitor_lifecycle.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOUR="$(TZ=Europe/Moscow date +%H)"
+          MINUTE="$(TZ=Europe/Moscow date +%M)"
+          # Any surviving tick in minutes 03..17 can cover the hourly scan.
+          # Instrument-level cooldown prevents duplicate executable signals.
+          if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 3 ] && [ "$MINUTE" -le 17 ]; then
+            python scripts/scan_market.py
+          else
+            echo "Outside hourly scan recovery window; safety cycle completed."
+          fi
 
   daily-snapshot:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '5 21 * * *'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '5 0 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: sandbox-daily-snapshot
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
