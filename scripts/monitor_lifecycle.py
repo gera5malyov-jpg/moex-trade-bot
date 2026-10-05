@@ -72,6 +72,10 @@ def main():
         f"Active lifecycle states={len(active)}; "
         f"transitions={transitions}; errors={errors}"
     )
+    if errors:
+        raise RuntimeError(
+            f"Lifecycle reconciliation failed for {errors} active state(s)"
+        )
 
 
 if __name__ == "__main__":
