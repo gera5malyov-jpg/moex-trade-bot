@@ -10,9 +10,11 @@ from tradebot.protocol import TradeCommand
 
 
 class FakeClient:
-    def __init__(self, fail_take=False):
+    def __init__(self, fail_take=False, duplicate_force_exit_once=False):
         self.account_id = "sandbox-test-account"
         self.fail_take = fail_take
+        self.duplicate_force_exit_once = duplicate_force_exit_once
+        self.force_exit_calls = 0
         self.position_lots = 1
         self.cancelled = []
         self.stop_calls = []
@@ -44,6 +46,12 @@ class FakeClient:
                     },
                 },
             }
+        self.force_exit_calls += 1
+        if self.duplicate_force_exit_once and self.force_exit_calls == 1:
+            raise RuntimeError(
+                'T-Invest API error 400: {"description":"30057",'
+                '"message":"The order is a duplicate, but the order report was not found"}'
+            )
         self.position_lots = 0
         return {
             "request_order_id": "exit-request",
@@ -238,6 +246,23 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(updated["status"], "PROTECTION_CANCEL_PENDING")
         self.assertEqual(client.position_lots, 1)
+
+    def test_time_stop_recovers_duplicate_force_exit_request(self):
+        past = datetime.now(timezone.utc) - timedelta(minutes=1)
+        client = FakeClient(duplicate_force_exit_once=True)
+        state = open_protected_long(
+            client=client,
+            command=self.command(time_stop=past),
+            prepared=self.prepared(),
+        )
+        updated = monitor_lifecycle_state(
+            client=client,
+            state=state,
+            now=datetime.now(timezone.utc),
+        )
+        self.assertEqual(updated["status"], "CLOSED_TIME_STOP")
+        self.assertEqual(client.position_lots, 0)
+        self.assertEqual(client.force_exit_calls, 2)
 
     def test_time_stop_forces_exit(self):
         past = datetime.now(timezone.utc) - timedelta(minutes=1)
