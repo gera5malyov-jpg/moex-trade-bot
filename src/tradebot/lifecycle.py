@@ -368,18 +368,61 @@ def _force_exit_remaining(
 
     bid = _best_bid(client, str(state["instrument_uid"]))
     attempt = int(state.get("force_exit_attempts") or 0) + 1
-    result = client.post_limit_order(
-        ticker=str(state["ticker"]),
-        class_code=str(state["class_code"]),
-        instrument_uid=str(state["instrument_uid"]),
-        side="SELL",
-        quantity_lots=remaining,
-        limit_price=bid,
-        idempotency_seed=(
-            f"moex-trade-bot:lifecycle:{state['signal_id']}:"
-            f"force-exit:{attempt}"
-        ),
+    base_seed = (
+        f"moex-trade-bot:lifecycle:{state['signal_id']}:"
+        f"force-exit:{attempt}"
     )
+    try:
+        result = client.post_limit_order(
+            ticker=str(state["ticker"]),
+            class_code=str(state["class_code"]),
+            instrument_uid=str(state["instrument_uid"]),
+            side="SELL",
+            quantity_lots=remaining,
+            limit_price=bid,
+            idempotency_seed=base_seed,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        if "30057" not in message and "duplicate" not in message.lower():
+            raise
+
+        # A previous runner may have submitted this deterministic request but
+        # crashed before journaling the incremented attempt. First reconcile
+        # the broker position: if it is already gone, never submit another
+        # SELL. If it is still present, use a one-shot recovery request id.
+        # FILL_AND_KILL exits do not rest in the book, so a remaining long
+        # position after the duplicate response is safe to retry in Sandbox.
+        after_duplicate = client.get_position_lots(
+            instrument_uid=str(state["instrument_uid"]),
+            lot_size=int(state["lot_size"]),
+        )
+        if after_duplicate <= 0:
+            out = dict(state)
+            out.update(
+                {
+                    "status": closed_status,
+                    "close_reason": reason,
+                    "updated_at": utc_now().isoformat(),
+                    "remaining_lots": 0,
+                    "force_exit_attempts": attempt,
+                    "force_exit_duplicate_reconciled": True,
+                }
+            )
+            return _finalize_realized_pnl(out)
+
+        recovery_nonce = utc_now().isoformat()
+        result = client.post_limit_order(
+            ticker=str(state["ticker"]),
+            class_code=str(state["class_code"]),
+            instrument_uid=str(state["instrument_uid"]),
+            side="SELL",
+            quantity_lots=after_duplicate,
+            limit_price=bid,
+            idempotency_seed=(
+                f"{base_seed}:duplicate-recovery:{recovery_nonce}"
+            ),
+        )
 
     post = result.get("post_order") or {}
     lots_executed = _as_int(post, "lotsExecuted", "lots_executed")
