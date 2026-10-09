@@ -5,12 +5,10 @@ on:
   schedule:
     # Resilient scheduler hub. GitHub may delay/drop individual schedule events; recovery is mandatory,
     # so every surviving tick performs all safety-critical reconciliation.
-    # Moscow time is explicit; no UTC conversion is required.
-    - cron: "3/5 9-18 * * 1-5"
-      timezone: "Europe/Moscow"
+    # GitHub Actions cron uses UTC; 09-18 Moscow = 06-15 UTC.
+    - cron: "3/5 6-15 * * 1-5"
     # End-of-day broker snapshot for the just-finished Moscow date.
-    - cron: "5 0 * * *"
-      timezone: "Europe/Moscow"
+    - cron: "5 21 * * *"
 
 permissions:
   contents: read
@@ -23,7 +21,7 @@ jobs:
   trading-cycle:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '3/5 9-18 * * 1-5'
+      github.event.schedule == '3/5 6-15 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -126,7 +124,7 @@ jobs:
   daily-snapshot:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '5 0 * * *'
+      github.event.schedule == '5 21 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
