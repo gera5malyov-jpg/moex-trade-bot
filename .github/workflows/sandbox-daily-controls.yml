@@ -56,6 +56,10 @@ jobs:
         run: python scripts/monitor_lifecycle.py
 
       - name: Ensure today's Sandbox readiness
+        id: readiness
+        # A cancelled Sandbox smoke BUY must not suppress market analysis.
+        # Actual strategy commands remain blocked unless this test succeeds.
+        continue-on-error: true
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
@@ -68,6 +72,7 @@ jobs:
         run: python scripts/sandbox_lifecycle_smoke.py
 
       - name: Process fresh trade commands
+        if: steps.readiness.outcome == 'success'
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
@@ -105,21 +110,28 @@ jobs:
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
-          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
-          SCANNER_COOLDOWN_MINUTES: "20"
+          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"
+          SCANNER_COOLDOWN_MINUTES: "60"
           MAIL_TO: gera5malyov+trade@gmail.com
         shell: bash
         run: |
           set -euo pipefail
           HOUR="$(TZ=Europe/Moscow date +%H)"
           MINUTE="$(TZ=Europe/Moscow date +%M)"
-          # Any surviving tick in minutes 03..17 can cover the hourly scan.
-          # Instrument-level cooldown prevents duplicate executable signals.
-          if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 3 ] && [ "$MINUTE" -le 17 ]; then
+          # GitHub cron can be delayed substantially. Extend the recovery window
+          # while respecting the strategy market-hours gate in scan_market.py.
+          # Per-instrument Gmail cooldown prevents repeated candidate emails.
+          if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 3 ] && [ "$MINUTE" -le 42 ]; then
             python scripts/scan_market.py
           else
-            echo "Outside hourly scan recovery window; safety cycle completed."
+            echo "Outside scan recovery window; safety cycle completed."
           fi
+
+      - name: Surface readiness failure after safety and scan stages
+        if: steps.readiness.outcome == 'failure'
+        run: |
+          echo "::error::Sandbox readiness smoke failed: command processing was blocked, but analysis-only scanning was allowed."
+          exit 1
 
   daily-snapshot:
     if: >-
