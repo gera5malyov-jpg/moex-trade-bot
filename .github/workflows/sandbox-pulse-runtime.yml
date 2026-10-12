@@ -69,7 +69,7 @@ jobs:
           TRADING_ENABLED: "false"
           SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
-          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "0"
+          SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"
           SCANNER_COOLDOWN_MINUTES: "20"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: gera5malyov+trade@gmail.com
