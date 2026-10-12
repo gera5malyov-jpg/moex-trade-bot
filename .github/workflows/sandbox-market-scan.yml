@@ -2,8 +2,13 @@ name: Sandbox market scan
 
 on:
   workflow_dispatch:
+  # Independent hourly fallback for market analysis when the scheduler hub
+  # is delayed or its protective smoke test cannot complete.
+  schedule:
+    # 10:22-17:22 Moscow (GitHub cron is UTC).
+    - cron: "22 7-14 * * 1-5"
 
-# Scheduled execution moved to sandbox-trading-runtime.yml.
+# Execution is still gated by signed Sandbox readiness in scan_market.py.
 permissions:
   contents: read
 
@@ -30,7 +35,7 @@ jobs:
           SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"
-          SCANNER_COOLDOWN_MINUTES: "20"
+          SCANNER_COOLDOWN_MINUTES: "60"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: gera5malyov+trade@gmail.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
