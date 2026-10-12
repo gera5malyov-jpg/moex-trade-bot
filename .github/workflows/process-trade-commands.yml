@@ -2,13 +2,17 @@ name: Process trade commands
 
 on:
   workflow_dispatch:
+  # Backup after the hourly ChatGPT Sandbox reviewer (at :30 Moscow).
+  schedule:
+    - cron: "35,40 7-14 * * 1-5"
 
-# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
+# Hard executor checks signed daily readiness/baseline and signal freshness.
 permissions:
   contents: read
 
 concurrency:
-  group: process-trade-commands
+  # Serialize with the primary scheduler to prevent parallel command attempts.
+  group: sandbox-daily-controls
   cancel-in-progress: false
 
 jobs:
