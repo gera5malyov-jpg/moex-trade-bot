@@ -149,6 +149,10 @@ def execution_snapshot_ready(
 
 
 def main():
+    if not entry_window_open(datetime.now(timezone.utc)):
+        print(json.dumps({"status": "scanner_skipped_outside_market_window"}))
+        return
+
     # GitHub scheduled jobs can occasionally be delayed. Guarantee that the
     # signed daily baseline exists immediately before the first market scan.
     # risk_baseline.py is idempotent: it exits without creating a duplicate
