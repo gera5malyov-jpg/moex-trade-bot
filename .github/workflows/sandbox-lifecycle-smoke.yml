@@ -11,6 +11,7 @@ on:
     - cron: "10,40 7-14 * * 1-5"
 
 # Jobs across alternate entrypoints must not overlap protective lifecycle work.
+# Failed sandbox FILL_AND_KILL exits are journaled and reconciled before retry.
 permissions:
   contents: read
 
