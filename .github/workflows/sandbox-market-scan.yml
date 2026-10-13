@@ -11,7 +11,8 @@ on:
     # 10:22-17:22 Moscow (GitHub cron is UTC).
     - cron: "22 7-14 * * 1-5"
 
-# Execution is still gated by signed Sandbox readiness in scan_market.py.
+# A signed Sandbox readiness marker is mandatory for executable signals.
+# This workflow never directly places a BUY; only reviewed commands can do so.
 permissions:
   contents: read
 
