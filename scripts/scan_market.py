@@ -336,14 +336,15 @@ def main():
         for candidate in candidates
         if candidate["instrument_type"] in {"share", "etf"}
     ]
-    analysis_only_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate["instrument_type"] not in {"share", "etf"}
-    ]
+    # Strategy v2.2 is share/ETF-only. Never let unsupported futures,
+    # options or bonds consume the independent reviewer's limited signal slots.
     ordered_candidates = list(supported_candidates)
-    if analysis_only_max_signals > 0:
-        ordered_candidates.extend(analysis_only_candidates)
+    print(json.dumps({
+        "diagnostic": "scanner_universe",
+        "total_candidates": len(candidates),
+        "supported_share_etf": len(supported_candidates),
+        "unsupported_research_only": len(candidates) - len(supported_candidates),
+    }))
 
     # Evaluate the whole supported shortlist before emitting signals. The broad
     # universe scanner is intentionally cheap and move-based; final emission is
