@@ -2,6 +2,9 @@ name: Sandbox market scan
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/sandbox-market-scan.yml"
   # Independent hourly fallback for market analysis when the scheduler hub
   # is delayed or its protective smoke test cannot complete.
   schedule:
