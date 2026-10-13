@@ -72,7 +72,7 @@ jobs:
         run: python scripts/sandbox_lifecycle_smoke.py
 
       - name: Process fresh trade commands
-        if: steps.readiness.outcome == 'success'
+        if: steps.readiness.outcome == 'success' && steps.readiness.outputs.ready == 'true'
         env:
           PYTHONPATH: src
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
