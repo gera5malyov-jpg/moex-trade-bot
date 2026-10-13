@@ -22,7 +22,7 @@ class SandboxWorkflowSafetyTests(unittest.TestCase):
         text = workflow("sandbox-daily-controls.yml")
         self.assertIn("id: readiness", text)
         self.assertIn("continue-on-error: true", text)
-        self.assertIn("if: steps.readiness.outcome == 'success'", text)
+        self.assertIn("steps.readiness.outputs.ready == 'true'", text)
         self.assertIn("SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: \"2\"", text)
         self.assertIn("Surface readiness failure after safety and scan stages", text)
         self.assertIn("group: sandbox-daily-controls", text)
@@ -41,6 +41,35 @@ class SandboxWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("TINVEST_SANDBOX_ACCOUNT_NAME:", text)
         self.assertIn("python scripts/process_commands.py", text)
         self.assertIn("python scripts/monitor_lifecycle.py", text)
+
+    def test_readiness_smoke_has_market_hours_and_positive_output(self):
+        from datetime import datetime, timezone
+        from scripts.sandbox_lifecycle_smoke import market_smoke_window_open
+        self.assertFalse(market_smoke_window_open(datetime(2026, 10, 13, 6, 0, tzinfo=timezone.utc)))
+        self.assertTrue(market_smoke_window_open(datetime(2026, 10, 13, 7, 10, tzinfo=timezone.utc)))
+        self.assertFalse(market_smoke_window_open(datetime(2026, 10, 13, 15, 0, tzinfo=timezone.utc)))
+        self.assertFalse(market_smoke_window_open(datetime(2026, 10, 11, 9, 0, tzinfo=timezone.utc)))
+        script = (ROOT / "scripts" / "sandbox_lifecycle_smoke.py").read_text(encoding="utf-8")
+        self.assertIn("GITHUB_OUTPUT", script)
+        self.assertIn("write_readiness_step_output(True)", script)
+        self.assertIn("write_readiness_step_output(False)", script)
+
+    def test_scanner_only_sends_supported_strategy_types(self):
+        script = (ROOT / "scripts" / "scan_market.py").read_text(encoding="utf-8")
+        self.assertIn("ordered_candidates = list(supported_candidates)", script)
+        self.assertNotIn("ordered_candidates.extend(analysis_only_candidates)", script)
+        self.assertIn("scanner_skipped_outside_market_window", script)
+
+    def test_backup_workflows_separate_and_order_safe(self):
+        readiness = workflow("sandbox-lifecycle-smoke.yml")
+        self.assertIn("10,40 7-14 * * 1-5", readiness)
+        self.assertIn("group: sandbox-daily-controls", readiness)
+        commands = workflow("process-trade-commands.yml")
+        self.assertLess(commands.index("Reconcile protective lifecycle before any new order"), commands.index("Process commands"))
+        pulse = workflow("sandbox-pulse-runtime.yml")
+        self.assertIn("inputs.pulse == 'readiness'", pulse)
+        self.assertIn("inputs.pulse == 'scan'", pulse)
+        self.assertIn("inputs.pulse == 'heartbeat'", pulse)
 
     def test_manual_scan_routes_allow_analysis_only(self):
         for filename in (
