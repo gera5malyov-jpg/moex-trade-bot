@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,23 @@ from tradebot.tinvest import TInvestSandboxClient
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def market_smoke_window_open(now_utc: datetime) -> bool:
+    """The Sandbox broker smoke must never submit a test BUY at night."""
+    local = now_utc.astimezone(MOSCOW)
+    minutes = local.hour * 60 + local.minute
+    return local.weekday() < 5 and 10 * 60 + 5 <= minutes < 17 * 60 + 30
+
+
+def write_readiness_step_output(ready: bool) -> None:
+    """Only a verified protected lifecycle may enable the executor step."""
+    output_path = os.getenv("GITHUB_OUTPUT")
+    if output_path:
+        with open(output_path, "a", encoding="utf-8") as output:
+            output.write(f"ready={str(ready).lower()}\n")
+
+
 
 def q(value):
     if not isinstance(value, dict):
@@ -113,6 +131,14 @@ def main():
     cfg = Config.from_env()
     now = datetime.now(timezone.utc)
     moscow_date = now.astimezone(MOSCOW).date().isoformat()
+    if not market_smoke_window_open(now):
+        write_readiness_step_output(False)
+        print(json.dumps({
+            "status": "smoke_skipped_outside_market_window",
+            "trading_date_moscow": moscow_date,
+            "readiness": False,
+        }))
+        return
 
     client = TInvestSandboxClient(
         token=cfg.tinvest_token,
@@ -127,6 +153,7 @@ def main():
         expected_account_name=cfg.sandbox_account_name,
         expected_account_id=client.account_id,
     ):
+        write_readiness_step_output(True)
         print("Sandbox readiness marker already exists; smoke test skipped")
         return
 
@@ -447,6 +474,7 @@ def main():
         payload=readiness_payload,
     )
 
+    write_readiness_step_output(True)
     print(json.dumps({
         "status": "sandbox_lifecycle_smoke_passed",
         "signal_id": final_state["signal_id"],
