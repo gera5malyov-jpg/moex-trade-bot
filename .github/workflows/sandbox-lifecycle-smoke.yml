@@ -2,13 +2,20 @@ name: One-time Sandbox lifecycle smoke
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/sandbox-lifecycle-smoke.yml"
+  schedule:
+    # Independent readiness recovery during the Moscow trading day.
+    # Off-hours and closed-market attempts do not create a readiness marker.
+    - cron: "10,40 7-14 * * 1-5"
 
-# Scheduled execution is centralized in daily-snapshot.yml (Trading scheduler hub).
+# Jobs across alternate entrypoints must not overlap protective lifecycle work.
 permissions:
   contents: read
 
 concurrency:
-  group: one-time-sandbox-lifecycle-smoke
+  group: sandbox-daily-controls
   cancel-in-progress: false
 
 jobs:
