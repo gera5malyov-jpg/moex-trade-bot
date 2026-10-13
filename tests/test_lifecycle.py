@@ -10,10 +10,11 @@ from tradebot.protocol import TradeCommand
 
 
 class FakeClient:
-    def __init__(self, fail_take=False, duplicate_force_exit_once=False):
+    def __init__(self, fail_take=False, duplicate_force_exit_once=False, cancel_force_exit_once=False):
         self.account_id = "sandbox-test-account"
         self.fail_take = fail_take
         self.duplicate_force_exit_once = duplicate_force_exit_once
+        self.cancel_force_exit_once = cancel_force_exit_once
         self.force_exit_calls = 0
         self.position_lots = 1
         self.cancelled = []
@@ -47,6 +48,8 @@ class FakeClient:
                 },
             }
         self.force_exit_calls += 1
+        if self.cancel_force_exit_once and self.force_exit_calls == 1:
+            raise RuntimeError('T-Invest API error 400: {"description":"30227","message":"Order cancelled"}')
         if self.duplicate_force_exit_once and self.force_exit_calls == 1:
             raise RuntimeError(
                 'T-Invest API error 400: {"description":"30057",'
@@ -262,6 +265,29 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(updated["status"], "CLOSED_TIME_STOP")
         self.assertEqual(client.position_lots, 0)
+        self.assertEqual(client.force_exit_calls, 2)
+
+    def test_cancelled_force_exit_is_journaled_and_retried(self):
+        past = datetime.now(timezone.utc) - timedelta(minutes=1)
+        client = FakeClient(cancel_force_exit_once=True)
+        state = open_protected_long(
+            client=client,
+            command=self.command(time_stop=past),
+            prepared=self.prepared(),
+        )
+        first = monitor_lifecycle_state(
+            client=client, state=state, now=datetime.now(timezone.utc),
+        )
+        self.assertEqual(first["status"], "FORCE_EXIT_PENDING")
+        self.assertEqual(first["remaining_lots"], 1)
+        self.assertEqual(first["force_exit_attempts"], 1)
+        self.assertEqual(first["force_exit_last_error"], "SANDBOX_ORDER_CANCELLED_30227")
+        self.assertEqual(client.position_lots, 1)
+        final = monitor_lifecycle_state(
+            client=client, state=first, now=datetime.now(timezone.utc),
+        )
+        self.assertEqual(final["status"], "CLOSED_TIME_STOP")
+        self.assertEqual(final["remaining_lots"], 0)
         self.assertEqual(client.force_exit_calls, 2)
 
     def test_time_stop_forces_exit(self):
