@@ -2,6 +2,9 @@ name: Process trade commands
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/process-trade-commands.yml"
   # Backup after the hourly ChatGPT Sandbox reviewer (at :30 Moscow).
   schedule:
     - cron: "35,40 7-14 * * 1-5"
@@ -27,6 +30,18 @@ jobs:
           python-version: "3.12"
 
       - run: pip install -r requirements.txt
+
+      - name: Reconcile protective lifecycle before any new order
+        env:
+          PYTHONPATH: src
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+          TINVEST_SANDBOX_ACCOUNT_NAME: github-moex-trade-bot
+          TRADING_ENABLED: "true"
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
+          MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
+        run: python scripts/monitor_lifecycle.py
 
       - name: Process commands
         env:
