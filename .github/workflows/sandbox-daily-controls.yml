@@ -112,7 +112,7 @@ jobs:
           MAIL_IMAP_HOST: ${{ vars.MAIL_IMAP_HOST || 'imap.gmail.com' }}
           MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
           TRADING_ENABLED: "false"
-          SCANNER_MAX_PER_TYPE: "6"
+          SCANNER_MAX_PER_TYPE: "12"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"
           SCANNER_COOLDOWN_MINUTES: "60"

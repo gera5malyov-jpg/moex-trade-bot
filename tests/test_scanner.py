@@ -1,7 +1,8 @@
 import unittest
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from tradebot.scanner import _candle_summary, _eligible, atr, ema, rsi, vwap
+from tradebot.scanner import _candle_summary, _eligible, atr, ema, rsi, vwap, scan_candidates
 
 
 def q(value: str):
@@ -72,6 +73,52 @@ class ScannerMathTests(unittest.TestCase):
         rts = dict(base, realExchange="REAL_EXCHANGE_RTS")
         self.assertTrue(_eligible(moex, "share"))
         self.assertFalse(_eligible(rts, "share"))
+
+    def test_balanced_share_watchlist_keeps_mild_pullbacks(self):
+        class Client:
+            def __init__(self):
+                prices = {
+                    "UP5": "105", "UP2": "102", "UP1": "101",
+                    "DOWN0": "99.9", "DOWN1": "99", "DOWN5": "95",
+                }
+                self.instruments = [
+                    {
+                        "uid": name, "ticker": name, "classCode": "TQBR",
+                        "realExchange": "REAL_EXCHANGE_MOEX",
+                        "apiTradeAvailableFlag": True, "buyAvailableFlag": True,
+                        "forQualInvestorFlag": False, "liquidityFlag": True,
+                    }
+                    for name in prices
+                ]
+                self.prices = prices
+
+            def get_last_prices(self, instruments):
+                stamp = datetime.now(timezone.utc).isoformat()
+                return [
+                    {
+                        "instrumentUid": uid,
+                        "price": q(price),
+                        "time": stamp,
+                    }
+                    for uid, price in self.prices.items()
+                ]
+
+            def get_close_prices(self, instruments):
+                return [
+                    {"instrumentUid": uid, "price": q("100")}
+                    for uid in self.prices
+                ]
+
+            def list_instruments(self, instrument_type):
+                self.assert_type = instrument_type
+                return self.instruments
+
+        items = scan_candidates(
+            Client(), max_per_type=4, instrument_types=("share",),
+        )
+        tickers = {item["ticker"] for item in items}
+        self.assertEqual(tickers, {"UP5", "UP2", "DOWN0", "DOWN1"})
+        self.assertEqual(len(items), 4)
 
     def test_dfa_remains_special_analysis_only_universe(self):
         dfa = {

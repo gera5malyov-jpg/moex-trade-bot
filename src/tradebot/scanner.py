@@ -208,6 +208,7 @@ def scan_candidates(
     client: TInvestSandboxClient,
     *,
     max_per_type: int = 2,
+    instrument_types: tuple[str, ...] = INSTRUMENT_TYPES,
 ) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     all_candidates: list[dict[str, Any]] = []
@@ -219,7 +220,7 @@ def scan_candidates(
     last_map = _price_map(last_items, "price")
     close_map = _price_map(close_items, "price")
 
-    for instrument_type in INSTRUMENT_TYPES:
+    for instrument_type in instrument_types:
         try:
             universe = [
                 item
@@ -262,7 +263,10 @@ def scan_candidates(
                 / close_price
                 * Decimal("100")
             )
-            if abs(move_pct) < MIN_ABS_MOVE_PERCENT[instrument_type]:
+            if (
+                instrument_type not in {"share", "etf"}
+                and abs(move_pct) < MIN_ABS_MOVE_PERCENT[instrument_type]
+            ):
                 continue
 
             type_candidates.append(
@@ -280,17 +284,35 @@ def scan_candidates(
                 }
             )
 
-        # The executable cash strategy is LONG-only. Prefer positive
-        # momentum candidates first, while still retaining negative movers
-        # later in the list for possible mean-reversion review.
-        type_candidates.sort(
-            key=lambda x: (
-                x["move_percent"] > 0,
-                x["score"],
-            ),
-            reverse=True,
-        )
-        all_candidates.extend(type_candidates[:max_per_type])
+        if instrument_type in {"share", "etf"}:
+            # Trend/pullback setups need a balanced watchlist. A hard daily
+            # mover gate used to exclude quiet recoveries and mild pullbacks,
+            # even though the 1h+15m strategy could be valid.
+            positives = sorted(
+                (x for x in type_candidates if x["move_percent"] >= 0),
+                key=lambda x: x["score"], reverse=True,
+            )
+            pullbacks = sorted(
+                (x for x in type_candidates if x["move_percent"] < 0),
+                key=lambda x: x["score"],
+            )
+            positive_budget = (max_per_type + 1) // 2
+            pullback_budget = max_per_type // 2
+            selected = positives[:positive_budget] + pullbacks[:pullback_budget]
+            if len(selected) < max_per_type:
+                selected_ids = {x["instrument_uid"] for x in selected}
+                remaining = (
+                    x for x in positives + pullbacks
+                    if x["instrument_uid"] not in selected_ids
+                )
+                selected.extend(list(remaining)[:max_per_type-len(selected)])
+            all_candidates.extend(selected)
+        else:
+            type_candidates.sort(
+                key=lambda x: (x["move_percent"] > 0, x["score"]),
+                reverse=True,
+            )
+            all_candidates.extend(type_candidates[:max_per_type])
 
     all_candidates.sort(
         key=lambda x: (
