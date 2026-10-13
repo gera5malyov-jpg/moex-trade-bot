@@ -343,6 +343,34 @@ def _cancel_verified_or_wait(
     )
 
 
+def _record_unfilled_force_exit(
+    *,
+    client: TInvestSandboxClient,
+    state: dict[str, Any],
+    reason: str,
+    closed_status: str,
+    attempt: int,
+) -> dict[str, Any]:
+    """A cancelled FILL_AND_KILL exit is not proof that the position was sold."""
+    outstanding = client.get_position_lots(
+        instrument_uid=str(state["instrument_uid"]),
+        lot_size=int(state["lot_size"]),
+    )
+    out = dict(state)
+    out.update({
+        "status": "FORCE_EXIT_PENDING" if outstanding > 0 else closed_status,
+        "close_reason": reason,
+        "pending_closed_status": closed_status,
+        "force_exit_attempts": attempt,
+        "force_exit_last_error": "SANDBOX_ORDER_CANCELLED_30227",
+        "remaining_lots": outstanding,
+        "updated_at": utc_now().isoformat(),
+    })
+    if outstanding <= 0:
+        return _finalize_realized_pnl(out)
+    return out
+
+
 def _force_exit_remaining(
     *,
     client: TInvestSandboxClient,
@@ -384,6 +412,14 @@ def _force_exit_remaining(
         )
     except RuntimeError as exc:
         message = str(exc)
+        if "30227" in message:
+            return _record_unfilled_force_exit(
+                client=client,
+                state=state,
+                reason=reason,
+                closed_status=closed_status,
+                attempt=attempt,
+            )
         if "30057" not in message and "duplicate" not in message.lower():
             raise
 
@@ -412,17 +448,28 @@ def _force_exit_remaining(
             return _finalize_realized_pnl(out)
 
         recovery_nonce = utc_now().isoformat()
-        result = client.post_limit_order(
-            ticker=str(state["ticker"]),
-            class_code=str(state["class_code"]),
-            instrument_uid=str(state["instrument_uid"]),
-            side="SELL",
-            quantity_lots=after_duplicate,
-            limit_price=bid,
-            idempotency_seed=(
-                f"{base_seed}:duplicate-recovery:{recovery_nonce}"
-            ),
-        )
+        try:
+            result = client.post_limit_order(
+                ticker=str(state["ticker"]),
+                class_code=str(state["class_code"]),
+                instrument_uid=str(state["instrument_uid"]),
+                side="SELL",
+                quantity_lots=after_duplicate,
+                limit_price=bid,
+                idempotency_seed=(
+                    f"{base_seed}:duplicate-recovery:{recovery_nonce}"
+                ),
+            )
+        except RuntimeError as recovery_exc:
+            if "30227" not in str(recovery_exc):
+                raise
+            return _record_unfilled_force_exit(
+                client=client,
+                state=state,
+                reason=reason,
+                closed_status=closed_status,
+                attempt=attempt,
+            )
 
     post = result.get("post_order") or {}
     lots_executed = _as_int(post, "lotsExecuted", "lots_executed")
