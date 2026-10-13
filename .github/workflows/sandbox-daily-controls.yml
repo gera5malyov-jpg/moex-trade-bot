@@ -2,6 +2,9 @@ name: Sandbox daily controls
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - sandbox-pulse
   schedule:
     # Resilient scheduler hub. GitHub may delay/drop individual schedule events; recovery is mandatory,
     # so every surviving tick performs all safety-critical reconciliation.
@@ -21,6 +24,7 @@ jobs:
   trading-cycle:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref_name == 'sandbox-pulse') ||
       github.event.schedule == '3/5 6-15 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 12
