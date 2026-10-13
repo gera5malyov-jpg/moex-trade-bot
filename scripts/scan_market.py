@@ -329,6 +329,7 @@ def main():
     candidates = scan_candidates(
         client,
         max_per_type=max_per_type,
+        instrument_types=("share", "etf"),
     )
 
     supported_candidates = [
@@ -442,6 +443,10 @@ def main():
         context = item["context"]
         strategy_precheck = item["strategy_precheck"]
         execution_capability = item["execution_capability"]
+
+        if not execution_capability and int(strategy_precheck.get("quality_score") or 0) <= 0:
+            print(f"Candidate not sent (no valid v2.2 setup): {candidate['ticker']}")
+            continue
 
         if (
             not execution_capability
