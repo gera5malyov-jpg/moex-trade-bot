@@ -2,6 +2,15 @@ name: Sandbox pulse runtime
 
 on:
   workflow_dispatch:
+    inputs:
+      pulse:
+        description: "Select one Sandbox job; never run all jobs on a dispatch."
+        required: true
+        type: choice
+        options:
+          - readiness
+          - scan
+          - heartbeat
   push:
     tags:
       - "sandbox-readiness-pulse"
@@ -13,11 +22,11 @@ permissions:
 
 jobs:
   readiness:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'sandbox-readiness-pulse'
+    if: (github.event_name == 'workflow_dispatch' && inputs.pulse == 'readiness') || github.ref_name == 'sandbox-readiness-pulse'
     runs-on: ubuntu-latest
     timeout-minutes: 9
     concurrency:
-      group: sandbox-daily-readiness
+      group: sandbox-daily-controls
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
@@ -49,7 +58,7 @@ jobs:
         run: python scripts/sandbox_lifecycle_smoke.py
 
   market-scan:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'sandbox-scan-pulse'
+    if: (github.event_name == 'workflow_dispatch' && inputs.pulse == 'scan') || github.ref_name == 'sandbox-scan-pulse'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     concurrency:
@@ -70,7 +79,7 @@ jobs:
           SCANNER_MAX_PER_TYPE: "6"
           SCANNER_MAX_SIGNALS: "3"
           SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"
-          SCANNER_COOLDOWN_MINUTES: "20"
+          SCANNER_COOLDOWN_MINUTES: "60"
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_TO: gera5malyov+trade@gmail.com
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
@@ -79,11 +88,11 @@ jobs:
         run: python scripts/scan_market.py
 
   trading-heartbeat:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'sandbox-heartbeat-pulse'
+    if: (github.event_name == 'workflow_dispatch' && inputs.pulse == 'heartbeat') || github.ref_name == 'sandbox-heartbeat-pulse'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
-      group: sandbox-trading-heartbeat
+      group: sandbox-daily-controls
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
