@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""T-Invest API health: read-only, email only on an authenticated API failure."""
+"""T-Invest API health: read-only, artifact for central notifier."""
 import json
 import os
-import smtplib
 import time
-from email.message import EmailMessage
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -59,38 +58,19 @@ def check():
     return "SKIP", "Не удалось подтвердить статус"
 
 
-def alert(reason):
-    user = os.getenv("MAIL_USER", "").strip()
-    password = os.getenv("MAIL_APP_PASSWORD", "")
-    if not user or not password:
-        print("::error::API failed; email SMTP secrets not available")
-        return False
-    msg = EmailMessage()
-    msg["From"] = user
-    msg["To"] = "shop@office-mag.com"
-    msg["Subject"] = "ВАЖНО !!! ВНИМАНИЕ !! Не работает API: Т-Инвестиции Sandbox"
-    msg.set_content("Проверка API торгового бота выявила проблему.\n\nПричина: " +
-                    reason + "\nПроверка: " + os.getenv("RUN_URL", "") +
-                    "\nЗапрос только для чтения, сделок не совершалось.")
-    try:
-        with smtplib.SMTP(os.getenv("MAIL_SMTP_HOST") or "smtp.gmail.com", 587, timeout=30) as smtp:
-            smtp.starttls()
-            smtp.login(user, password)
-            smtp.send_message(msg)
-        print("Failure-only API alert delivered")
-        return True
-    except (OSError, smtplib.SMTPException) as err:
-        print("::error::Cannot send alert:", type(err).__name__)
-        return False
-
-
 def main():
     status, reason = check()
     print("T-Invest API status:", status, reason)
-    if status != "FAIL":
-        print("No outage, no email")
-        return 0
-    return 1 if alert(reason) else 1
+    status = "UNKNOWN" if status == "SKIP" else status
+    path = Path("reports") / "tinvest-api-health.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "services": [{"service": "Т-Инвестиции Sandbox", "status": status,
+                      "reason": reason}],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("No email from trading repository; central notifier handles alerts")
+    return 0
 
 
 if __name__ == "__main__":
