@@ -1,8 +1,12 @@
-name: API health - T-Invest Sandbox (failure alerts only)
+name: T-Invest API status producer
 on:
   schedule:
     - cron: '59 5 * * *'
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/api-health-watch.yml'
+      - 'scripts/api_health_watch.py'
 permissions:
   contents: read
 jobs:
@@ -11,9 +15,6 @@ jobs:
     timeout-minutes: 6
     env:
       TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
-      MAIL_USER: ${{ secrets.MAIL_USER }}
-      MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
-      MAIL_SMTP_HOST: ${{ vars.MAIL_SMTP_HOST || 'smtp.gmail.com' }}
       RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -22,5 +23,13 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install 'requests>=2.31,<3'
       - run: python -m py_compile scripts/api_health_watch.py
-      - name: Read-only broker API probe; email only on confirmed error
+      - name: Read-only T-Invest API probe
         run: python scripts/api_health_watch.py
+      - name: Publish sanitized result for central notifier
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinvest-api-health-${{ github.run_id }}
+          path: reports/tinvest-api-health.json
+          if-no-files-found: error
+          retention-days: 3
