@@ -435,6 +435,7 @@ def main():
     sent = 0
     executable_sent = 0
     analysis_only_sent = 0
+    send_failures = 0
     for item in evaluated_candidates:
         if sent >= max_signals:
             break
@@ -522,12 +523,20 @@ def main():
                 f"{candidate.get('ticker')}: "
                 f"{type(exc).__name__}: {exc}"
             )
+            send_failures += 1
 
     print(
         f"Scanner candidates={len(candidates)}; "
         f"signals sent={sent}; executable-capable={executable_sent}; "
         f"analysis-only={analysis_only_sent}"
     )
+
+    # Gmail delivery errors must fail the job: GitHub's retry can then
+    # recover instead of falsely reporting a successful empty scan.
+    if send_failures:
+        raise RuntimeError(
+            f"Scanner failed to deliver {send_failures} signal email(s)"
+        )
 
 
 if __name__ == "__main__":
