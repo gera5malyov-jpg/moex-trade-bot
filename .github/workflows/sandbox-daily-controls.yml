@@ -8,8 +8,8 @@ on:
   schedule:
     # Resilient scheduler hub. GitHub may delay/drop individual schedule events; recovery is mandatory,
     # so every surviving tick performs all safety-critical reconciliation.
-    # GitHub Actions cron uses UTC; 09-18 Moscow = 06-15 UTC.
-    - cron: "3/5 6-15 * * 1-5"
+    # UTC 07-14 = 10-17 Moscow. Stagger three cycles/hour to reduce GitHub cron drops.
+    - cron: "7,27,47 7-14 * * 1-5"
     # End-of-day broker snapshot for the just-finished Moscow date.
     - cron: "5 21 * * *"
 
@@ -25,7 +25,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref_name == 'sandbox-pulse') ||
-      github.event.schedule == '3/5 6-15 * * 1-5'
+      github.event.schedule == '7,27,47 7-14 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -126,7 +126,17 @@ jobs:
           # while respecting the strategy market-hours gate in scan_market.py.
           # Per-instrument Gmail cooldown prevents repeated candidate emails.
           if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 3 ] && [ "$MINUTE" -le 42 ]; then
-            python scripts/scan_market.py
+            for attempt in 1 2 3; do
+              if python scripts/scan_market.py; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::Market scan failed after 3 attempts"
+                exit 1
+              fi
+              echo "::warning::Market scan transient failure, retry $attempt"
+              sleep 10
+            done
           else
             echo "Outside scan recovery window; safety cycle completed."
           fi
