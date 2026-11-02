@@ -6,6 +6,7 @@ They complement, but do not replace, a live broker smoke test.
 """
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -27,9 +28,30 @@ class SandboxWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("Surface readiness failure after safety and scan stages", text)
         self.assertIn("group: sandbox-daily-controls", text)
 
+    def test_scheduled_market_scan_overlaps_actual_hour_gate(self):
+        # Regression: :07/:27/:47 could never pass the :17-:26 scan gate.
+        text = workflow("sandbox-daily-controls.yml")
+        match = re.search(r'cron: "([0-9,]+) 7-14 \* \* 1-5"', text)
+        self.assertIsNotNone(match)
+        minutes = {int(m) for m in match.group(1).split(",")}
+        gate = re.search(
+            r'MINUTE" -ge (\d+).*MINUTE" -le (\d+)',
+            text,
+        )
+        self.assertIsNotNone(gate)
+        earliest, latest = map(int, gate.groups())
+        self.assertTrue(
+            any(earliest <= m <= latest for m in minutes),
+            "Primary cron never enters its own market scanner time gate",
+        )
+        self.assertIn(
+            f"github.event.schedule == '{match.group(1)} 7-14 * * 1-5'",
+            text,
+        )
+
     def test_independent_market_scan_is_analysis_safe(self):
         text = workflow("sandbox-market-scan.yml")
-        self.assertIn('cron: "22 7-14 * * 1-5"', text)
+        self.assertIn('cron: "24 7-14 * * 1-5"', text)
         self.assertIn('TRADING_ENABLED: "false"', text)
         self.assertIn('SCANNER_ANALYSIS_ONLY_MAX_SIGNALS: "2"', text)
         self.assertIn("TINVEST_SANDBOX_ACCOUNT_NAME:", text)
