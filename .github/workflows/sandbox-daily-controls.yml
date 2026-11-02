@@ -124,8 +124,11 @@ jobs:
           MINUTE="$(TZ=Europe/Moscow date +%M)"
           # GitHub cron can be delayed substantially. Extend the recovery window
           # while respecting the strategy market-hours gate in scan_market.py.
+          # Signal freshness is 12 minutes; hourly reviewer runs at :30 MSK.
+          # Scan only in :17-:26 to avoid sending candidates that will be stale
+          # before review. Independent backup scanner runs at :22 MSK.
           # Per-instrument Gmail cooldown prevents repeated candidate emails.
-          if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 3 ] && [ "$MINUTE" -le 42 ]; then
+          if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 17 ] && [ "$MINUTE" -le 26 ]; then
             for attempt in 1 2 3; do
               if python scripts/scan_market.py; then
                 break
@@ -138,7 +141,7 @@ jobs:
               sleep 10
             done
           else
-            echo "Outside scan recovery window; safety cycle completed."
+            echo "Outside reviewer-aligned scan window; safety cycle completed."
           fi
 
       - name: Surface readiness failure after safety and scan stages
