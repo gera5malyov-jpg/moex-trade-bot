@@ -31,11 +31,11 @@ class SandboxWorkflowSafetyTests(unittest.TestCase):
     def test_scheduled_market_scan_overlaps_actual_hour_gate(self):
         # Regression: :07/:27/:47 could never pass the :17-:26 scan gate.
         text = workflow("sandbox-daily-controls.yml")
-        match = re.search(r'cron: "([0-9,]+) 7-14 \\* \\* 1-5"', text)
+        match = re.search(r'cron: "([0-9,]+) 7-14 \* \* 1-5"', text)
         self.assertIsNotNone(match)
         minutes = {int(m) for m in match.group(1).split(",")}
         gate = re.search(
-            r'MINUTE" -ge (\\d+) \\] \\&\\& \\[ "\\$MINUTE" -le (\\d+)',
+            r'MINUTE" -ge (\d+).*MINUTE" -le (\d+)',
             text,
         )
         self.assertIsNotNone(gate)
