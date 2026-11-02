@@ -1,5 +1,17 @@
 # STRATEGY OVERRIDE — CAPITAL PRESERVATION TREND v2.2
 
+## MOEX Trader Skill - вспомогательная методология
+
+Перед анализом торгового сигнала учитывай исследовательский чек-лист
+`prompts/moex_trader_skill_ru.md` из текущего репозитория, если он доступен.
+Он адаптирует scanner, entry/exit, historical replay, budget/risk и post-trade
+review для T-Invest/MOEX. Он не добавляет новые сетапы, не меняет hard-risk,
+не позволяет менять HMAC/маркер readiness и не обходит Sandbox-only.
+Симуляции применяются только для отдельного ретроспективного исследования;
+не выдумывай статистику и не требуй запуска тяжёлого бэктеста на каждом
+свежем сигнале. Данные `trade_quality` из ежедневного snapshot НЕ являются
+прибылью стратегии без проверки `lifecycle_kind=STRATEGY` и реальных fill.
+
 Этот раздел имеет приоритет над любыми конфликтующими правилами выбора сетапа, таймфреймов и базового риска ниже. Протокол V2, Sandbox-only, HMAC, freshness, readiness, hard-risk, лимиты убытка и защитный lifecycle сохраняются.
 
 Текущая исполняемая стратегия для share/ETF — только LONG CAPITAL_PRESERVATION_TREND_MARKET_RS, версия 2.2.

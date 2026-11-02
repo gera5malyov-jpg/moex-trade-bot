@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from tradebot.config import Config
 from tradebot.mailbox import send_daily_data_email
+from tradebot.trader_skill_metrics import summarize_daily_trade_activity
 from tradebot.tinvest import TInvestSandboxClient
 
 
@@ -46,6 +47,7 @@ def main():
         "portfolio": portfolio,
         "positions": positions,
         "operations": operations,
+        "trade_quality": summarize_daily_trade_activity(operations),
         "note": (
             "Raw broker snapshot for ChatGPT daily report. "
             "Do not infer missing values."
