@@ -5,6 +5,7 @@ import imaplib
 import json
 import smtplib
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from email.message import EmailMessage
@@ -297,6 +298,38 @@ def _select_special_mailbox(
     raise RuntimeError(f"IMAP special mailbox not found: {special_flag}")
 
 
+def _authenticated_imap(
+    *, imap_host: str, user: str, app_password: str,
+    mailbox: str = "INBOX", readonly: bool = True,
+    special_flag: str | None = None,
+) -> imaplib.IMAP4_SSL:
+    """Bounded retry for transient IMAP connection/login/select failures.
+
+    Only idempotent setup is retried. Mid-stream FETCH and STORE errors
+    propagate so the whole scan can restart with a *fresh* IMAP search:
+    sequence IDs from a previous session must never be reused.
+    Authentication failures (IMAP4.error) are terminal, not retried.
+    """
+    for attempt in range(3):
+        client = None
+        try:
+            client = imaplib.IMAP4_SSL(imap_host, 993, timeout=25)
+            client.login(user, app_password)
+            if special_flag is not None:
+                _select_special_mailbox(client, special_flag)
+            else:
+                status, _ = client.select(mailbox, readonly=readonly)
+                if status != "OK":
+                    raise RuntimeError(f"IMAP select failed: {mailbox}")
+            return client
+        except (imaplib.IMAP4.abort, OSError, EOFError):
+            # A socket abort may make LOGOUT unsafe or block. Reconnect anew.
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+    raise RuntimeError("IMAP connection retry exhausted")
+
+
 def has_recent_signal_for_instrument(
     *,
     imap_host: str,
@@ -308,10 +341,11 @@ def has_recent_signal_for_instrument(
     if within_minutes <= 0:
         return False
 
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+        special_flag="\\Sent",
+    )
     try:
-        _select_special_mailbox(client, "\\Sent")
         status, data = client.search(
             None,
             f'(HEADER X-Trade-Instrument-Uid "{instrument_uid}")',
@@ -354,9 +388,10 @@ def _imap_has_exact_subject_from(
     subject: str,
     allowed_from: str,
 ) -> bool:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX")
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+        readonly=False,
+    )
     try:
         status, data = client.search(None, "SUBJECT", f'"{subject}"')
         if status != "OK":
@@ -392,9 +427,9 @@ def load_latest_lifecycle_states(
     hmac_secret: str,
     expected_account_id: str,
 ) -> list[dict]:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX", readonly=True)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+    )
     try:
         status, data = client.search(None, "SUBJECT", '"[TRADE-LIFECYCLE]"')
         if status != "OK":
@@ -485,9 +520,9 @@ def load_risk_baseline(
     expected_account_id: str,
 ) -> dict:
     subject = f"[TRADE-RISK-BASELINE] {trading_date}"
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX", readonly=True)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+    )
     try:
         status, data = client.search(None, "SUBJECT", f'"{subject}"')
         if status != "OK":
@@ -560,9 +595,9 @@ def load_latest_risk_baseline(
     expected_account_name: str,
     expected_account_id: str,
 ) -> dict | None:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX", readonly=True)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+    )
     try:
         status, data = client.search(
             None,
@@ -640,9 +675,9 @@ def has_sandbox_ready_marker(
     expected_account_name: str,
     expected_account_id: str,
 ) -> bool:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX", readonly=True)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+    )
     try:
         status, data = client.search(
             None,
@@ -702,9 +737,9 @@ def has_execution_receipt(
     hmac_secret: str,
 ) -> bool:
     subject = f"[TRADE-EXEC] {signal_id}"
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX", readonly=True)
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+    )
     try:
         status, data = client.search(None, "SUBJECT", f'"{subject}"')
         if status != "OK":
@@ -749,9 +784,10 @@ def iter_unseen_command_messages(
     app_password: str,
     allowed_from: str,
 ) -> Iterable[tuple[bytes, str, str]]:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX")
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+        readonly=False,
+    )
 
     status, data = client.search(
         None,
@@ -787,9 +823,10 @@ def mark_seen(
     app_password: str,
     message_id: bytes,
 ) -> None:
-    client = imaplib.IMAP4_SSL(imap_host, 993)
-    client.login(user, app_password)
-    client.select("INBOX")
+    client = _authenticated_imap(
+        imap_host=imap_host, user=user, app_password=app_password,
+        readonly=False,
+    )
     try:
         client.store(message_id, "+FLAGS", "\\Seen")
     finally:
