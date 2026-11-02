@@ -8,8 +8,8 @@ on:
   # Independent hourly fallback for market analysis when the scheduler hub
   # is delayed or its protective smoke test cannot complete.
   schedule:
-    # 10:22-17:22 Moscow (GitHub cron is UTC).
-    - cron: "22 7-14 * * 1-5"
+    # 10:24-17:24 Moscow (GitHub cron is UTC), 3 minutes after primary.
+    - cron: "24 7-14 * * 1-5"
 
 # A signed Sandbox readiness marker is mandatory for executable signals.
 # This workflow never directly places a BUY; only reviewed commands can do so.

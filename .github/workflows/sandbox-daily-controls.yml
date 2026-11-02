@@ -9,7 +9,7 @@ on:
     # Resilient scheduler hub. GitHub may delay/drop individual schedule events; recovery is mandatory,
     # so every surviving tick performs all safety-critical reconciliation.
     # UTC 07-14 = 10-17 Moscow. Stagger three cycles/hour to reduce GitHub cron drops.
-    - cron: "7,27,47 7-14 * * 1-5"
+    - cron: "21,41,56 7-14 * * 1-5"
     # End-of-day broker snapshot for the just-finished Moscow date.
     - cron: "5 21 * * *"
 
@@ -25,7 +25,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref_name == 'sandbox-pulse') ||
-      github.event.schedule == '7,27,47 7-14 * * 1-5'
+      github.event.schedule == '21,41,56 7-14 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -126,7 +126,7 @@ jobs:
           # while respecting the strategy market-hours gate in scan_market.py.
           # Signal freshness is 12 minutes; hourly reviewer runs at :30 MSK.
           # Scan only in :17-:26 to avoid sending candidates that will be stale
-          # before review. Independent backup scanner runs at :22 MSK.
+          # before review. Primary market scan around :21, independent backup at :24 MSK.
           # Per-instrument Gmail cooldown prevents repeated candidate emails.
           if [ "$HOUR" -ge 10 ] && [ "$HOUR" -le 17 ] && [ "$MINUTE" -ge 17 ] && [ "$MINUTE" -le 26 ]; then
             for attempt in 1 2 3; do
